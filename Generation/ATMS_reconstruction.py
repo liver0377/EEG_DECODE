@@ -1,6 +1,7 @@
 import os
 
 import torch
+import time
 import torch.optim as optim
 from torch.nn import CrossEntropyLoss
 from torch.nn import functional as F
@@ -12,6 +13,7 @@ os.environ["WANDB_MODE"] = 'offline'
 from itertools import combinations
 
 import clip
+import time
 import matplotlib.pyplot as plt
 import numpy as np
 import torch.nn as nn
@@ -221,10 +223,19 @@ class ImageEncoder(nn.Module):
     def forward(self, indices, preprocessed_image_cache):
         # 计算图片特征
         # selected_images = preprocessed_image_cache[indices].to(self.device)
-        selected_images = torch.stack([preprocessed_image_cache[i] for i in indices]).to(self.device)
+        start_time = time.time()
+
+        selected_images = torch.stack([preprocessed_image_cache[i] for i in indices], dim=0).to(self.device)
+        
+        mid_time = time.time()
+        # print(f"indices: {indices}")
+        # print(f"stack time: {mid_time - start_time}")
 
         image_features = self.vlmodel.encode_image(selected_images)  # (N, F)
         image_features = image_features / image_features.norm(dim=-1, keepdim=True)  # 正则化
+
+        end_time = time.time()
+        # print(f"encode time: {end_time - mid_time}")
         return image_features    
     
 
@@ -249,7 +260,10 @@ def train_model(sub, eeg_model, image_model, dataloader, optimizer, device, text
     mse_loss_fn = nn.MSELoss()
     print("epoch begin")
     for batch_idx, (eeg_data, labels, text, text_features, indices, img, img_features) in enumerate(dataloader):
-        print(f"batch: {batch_idx + 1}")
+        print(f"batch: {batch_idx + 1}") 
+
+        
+
         batch_size = eeg_data.shape[0]
         eeg_data = eeg_data.to(device)
         # text_features = text_features.to(device).float()
@@ -262,21 +276,33 @@ def train_model(sub, eeg_model, image_model, dataloader, optimizer, device, text
         # eeg_data = eeg_data.permute(0, 2, 1)
         subject_ids = torch.full((batch_size,), subject_id, dtype=torch.long).to(device)
   
+        
         # 获取eeg特征
+        
+        start_time = time.time()
+        
         # print(f"getting eeg feature")
         eeg_features = eeg_model(eeg_data, subject_ids).float()        
         features_list.append(eeg_features)
         
+        eeg_end_time = time.time()
+        # print(f"eeg 编码时间: {eeg_end_time - start_time} seconds")
         # 获取图片特征
         # image_inputs = torch.stack([preprocess_train(Image.open(img_path).convert("RGB")) for img_path in img])
         # print(f"img length: {len(img)}")
         # print(f"getting image feature")
         img_features_model = image_model(indices, preprocessed_image_cache_train_all)
+
+        image_end_time = time.time()
+        # print(f"图片编码时间: {image_end_time - eeg_end_time} seconds")
         # img_features_model = img_features_model / img_features_model.norm(dim=-1, keepdim=True)
         
         # 更新全局图片embedding
         # print(f"updating global image embedding")
         img_features_all[indices] = img_features_model.detach()#.cpu()
+
+        update_end_time = time.time()
+        # print(f"特征更新时间: {update_end_time - image_end_time} seconds")
         
         
         # 计算loss
@@ -288,9 +314,13 @@ def train_model(sub, eeg_model, image_model, dataloader, optimizer, device, text
 
         # print("backward")
         loss.backward()
+
         optimizer.step()
         total_loss += loss.item()
         
+        loss_end_time = time.time()
+        # print(f"反向传播时间: {loss_end_time - update_end_time} seconds")
+ 
         # Compute corresponding logits
         # logits_img = logit_scale * eeg_features @ img_features_all.T
         # logits_single = logits_img
