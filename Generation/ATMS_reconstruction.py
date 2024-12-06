@@ -17,7 +17,7 @@ import numpy as np
 import torch.nn as nn
 import torchvision.transforms as transforms
 import tqdm
-from eegdatasets_leaveone import EEGDataset
+from eegdatasets_leaveone import EEGDataset, vlmodel, preprocess_train
 
 from einops.layers.torch import Rearrange, Reduce
 
@@ -30,6 +30,7 @@ import csv
 from torch import Tensor
 import itertools
 import math
+from PIL import Image
 import re
 from subject_layers.Transformer_EncDec import Encoder, EncoderLayer
 from subject_layers.SelfAttention_Family import FullAttention, AttentionLayer
@@ -181,16 +182,43 @@ class ATMS(nn.Module):
         out = self.proj_eeg(eeg_embedding)
         return out  
 
+class ImageEncoder(nn.Module):
+    def __init__(self, vlmodel, preprocess_train, device):
+        super(ImageEncoder, self).__init__()
+        self.vlmodel = vlmodel
+        self.image_transform = preprocess_train
+        self.device = device        
+    
+    def forward(self, images):
+        batch_size = 20
+        image_features_list = []
+        
+        for i in range(0, len(images), batch_size):
+            batch_images = images[i:i + batch_size]
+            image_inputs = torch.stack([self.image_transform(Image.open(img).convert("RGB")) for img in images]).to(self.device)
+
+            batch_image_featurs = self.vlmodel.encode_image(image_inputs) # (batch_size, F)
+            batch_image_features /= batch_image_features.norm(dim=-1, keepdim=True)
+
+            image_features_list.append(batch_image_features)
+        
+        image_features = torch.cat(image_features_list, dim=0)
+        return image_features
+    
+    
+
 def extract_id_from_string(s):
     match = re.search(r'\d+$', s)
     if match:
         return int(match.group())
     return None
 
-def train_model(sub, eeg_model, dataloader, optimizer, device, text_features_all, img_features_all, config):
+def train_model(sub, eeg_model, image_model, dataloader, optimizer, device, text_features_all, img_features_all, config):
     eeg_model.train()
-    text_features_all = text_features_all.to(device).float() # (n_cls, d)
-    img_features_all = (img_features_all[::10]).to(device).float()
+    image_model.train()
+
+    # text_features_all = text_features_all.to(device).float() # (n_cls, d)
+    img_features_all = img_features_all.to(device).float()
     total_loss = 0
     correct = 0
     total = 0
@@ -198,48 +226,53 @@ def train_model(sub, eeg_model, dataloader, optimizer, device, text_features_all
     features_list = []  # List to store features
     save_features= True
     mse_loss_fn = nn.MSELoss()
-    for batch_idx, (eeg_data, labels, text, text_features, img, img_features) in enumerate(dataloader):
+    for batch_idx, (eeg_data, labels, text, text_features, indices, img, img_features) in enumerate(dataloader):
+        batch_size = eeg_data.shape[0]
         eeg_data = eeg_data.to(device)
-        text_features = text_features.to(device).float()
+        # text_features = text_features.to(device).float()
         img_features = img_features.to(device).float()
         labels = labels.to(device)
         
         optimizer.zero_grad()
         
-        batch_size = eeg_data.size(0)  # Assume the first element is the data tensor
         subject_id = extract_id_from_string(sub)
         # eeg_data = eeg_data.permute(0, 2, 1)
         subject_ids = torch.full((batch_size,), subject_id, dtype=torch.long).to(device)
-        # if not config.insubject:
-        #     subject_ids = torch.full((batch_size,), -1, dtype=torch.long).to(device)     
-        eeg_features = eeg_model(eeg_data, subject_ids).float()
-
-        
+  
+        # 获取eeg特征
+        eeg_features = eeg_model(eeg_data, subject_ids).float()        
         features_list.append(eeg_features)
-        logit_scale = eeg_model.logit_scale
         
-        img_loss = eeg_model.loss_func(eeg_features, img_features, logit_scale)
-        text_loss = eeg_model.loss_func(eeg_features, text_features, logit_scale)
-        # loss = img_loss + text_loss
-        # print("text_loss", text_loss)
-        # print("img_loss", img_loss)
+        # 获取图片特征
+        image_inputs = torch.stack([preprocess_train(Image.open(img_path).convert("RGB")) for img_path in img])
+        img_features_model = image_model(image_inputs)
+        img_features_model /= img_features_model.norm(dim=-1, keepdim=True)
+        
+        # 更新全局图片embedding
+        img_features_all[indices] = img_features_model.detach()
+        
+        
+        # 计算loss
+        logit_scale = eeg_model.logit_scale
+        img_loss = eeg_model.loss_func(eeg_features, img_features_model, logit_scale)
         regress_loss =  mse_loss_fn(eeg_features, img_features)
         loss = (alpha * regress_loss *10 + (1 - alpha) * img_loss*10)
-        loss.backward()
 
+        loss.backward()
         optimizer.step()
         total_loss += loss.item()
         
-        # logits = logit_scale * eeg_features @ text_features_all.T # (n_batch, n_cls)
         # Compute corresponding logits
-        logits_img = logit_scale * eeg_features @ img_features_all.T
-        # logits_text = logit_scale * eeg_features @ text_features_all.T
-        # logits_single = (logits_text + logits_img) / 2.0        
-        # logits_text = logit_scale * eeg_features @ text_features_all.T
+        # logits_img = logit_scale * eeg_features @ img_features_all.T
+        # logits_single = logits_img
+        # predicted = torch.argmax(logits_single, dim=1) # (n_batch, ) ∈ {0, 1, ..., n_cls-1}
+        
+        # 计算精确率
+        img_features_1654 = img_features_all[::10]
+        logits_img = logit_scale * eeg_features @ img_features_1654.T
         logits_single = logits_img
-        predicted = torch.argmax(logits_single, dim=1) # (n_batch, ) ∈ {0, 1, ..., n_cls-1}
-
-        batch_size = predicted.shape[0]
+        predicted = torch.argmax(logits_single, dim=1)
+        
         total += batch_size
         correct += (predicted == labels).sum().item()
         del eeg_data, eeg_features, img_features
@@ -247,8 +280,9 @@ def train_model(sub, eeg_model, dataloader, optimizer, device, text_features_all
     accuracy = correct / total
     return average_loss, accuracy, torch.cat(features_list, dim=0)
 
-def evaluate_model(sub, eeg_model, dataloader, device, text_features_all, img_features_all, k, config):
+def evaluate_model(sub, eeg_model, image_model, dataloader, device, text_features_all, img_features_all, k, config):
     eeg_model.eval()
+    image_model.eval()
 
     text_features_all = text_features_all.to(device).float()
     img_features_all = img_features_all.to(device).float()
@@ -262,7 +296,7 @@ def evaluate_model(sub, eeg_model, dataloader, device, text_features_all, img_fe
     top5_acc = 0
     mse_loss_fn = nn.MSELoss()
     with torch.no_grad():
-        for batch_idx, (eeg_data, labels, text, text_features, img, img_features) in enumerate(dataloader):
+        for batch_idx, (eeg_data, labels, text, text_features, indices, img, img_features) in enumerate(dataloader):
             eeg_data = eeg_data.to(device)
             text_features = text_features.to(device).float()
             labels = labels.to(device)
@@ -280,7 +314,6 @@ def evaluate_model(sub, eeg_model, dataloader, device, text_features_all, img_fe
             logit_scale = eeg_model.logit_scale 
             # print(eeg_features.type, text_features.type, img_features.type)
             img_loss = eeg_model.loss_func(eeg_features, img_features, logit_scale)
-            text_loss = eeg_model.loss_func(eeg_features, text_features, logit_scale)
             regress_loss =  mse_loss_fn(eeg_features, img_features)
             loss = (alpha * regress_loss *10 + (1 - alpha) * img_loss*10)
                 
@@ -353,7 +386,7 @@ def evaluate_model(sub, eeg_model, dataloader, device, text_features_all, img_fe
     top5_acc = top5_correct_count / total
     return average_loss, accuracy, top5_acc
 
-def main_train_loop(sub, current_time, eeg_model, train_dataloader, test_dataloader, optimizer, device, text_features_train_all, text_features_test_all, img_features_train_all, img_features_test_all, config, logger=None):
+def main_train_loop(sub, current_time, eeg_model, image_model, train_dataloader, test_dataloader, optimizer, device, text_features_train_all, text_features_test_all, img_features_train_all, img_features_test_all, config, logger=None):
     logger = wandb_logger(config) if logger else None
     logger.watch(eeg_model,logger) 
     train_losses, train_accuracies = [], []
@@ -369,7 +402,7 @@ def main_train_loop(sub, current_time, eeg_model, train_dataloader, test_dataloa
     
     for epoch in range(config.epochs):
         # Train the model
-        train_loss, train_accuracy, features_tensor = train_model(sub, eeg_model, train_dataloader, optimizer, device, text_features_train_all, img_features_train_all, config=config)
+        train_loss, train_accuracy, features_tensor = train_model(sub, eeg_model, image_model, train_dataloader, optimizer, device, text_features_train_all, img_features_train_all, config=config)
         if (epoch +1) % 5 == 0:                    
             # Save the model every 5 epochs                  
             if config.insubject==True:       
@@ -382,16 +415,16 @@ def main_train_loop(sub, current_time, eeg_model, train_dataloader, test_dataloa
                 torch.save(eeg_model.state_dict(), file_path)
             print(f"Model saved in {file_path}!")
         train_losses.append(train_loss)
-        train_accuracies.append(train_accuracy)
+        # train_accuracies.append(train_accuracy)
 
 
         # Evaluate the model
-        test_loss, test_accuracy, top5_acc = evaluate_model(sub, eeg_model, test_dataloader, device, text_features_test_all, img_features_test_all,k=200, config=config)
-        _, v2_acc, _ = evaluate_model(sub, eeg_model, test_dataloader, device, text_features_test_all, img_features_test_all, k = 2, config=config)
-        _, v4_acc, _ = evaluate_model(sub, eeg_model, test_dataloader, device, text_features_test_all, img_features_test_all, k = 4, config=config)
-        _, v10_acc, _ = evaluate_model(sub, eeg_model, test_dataloader, device, text_features_test_all, img_features_test_all, k = 10, config=config)
-        _, v50_acc, v50_top5_acc = evaluate_model(sub, eeg_model, test_dataloader, device, text_features_test_all, img_features_test_all,  k=50, config=config)
-        _, v100_acc, v100_top5_acc = evaluate_model(sub, eeg_model, test_dataloader, device, text_features_test_all, img_features_test_all,  k=100, config=config)
+        test_loss, test_accuracy, top5_acc = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, text_features_test_all, img_features_test_all,k=200, config=config)
+        _, v2_acc, _ = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, text_features_test_all, img_features_test_all, k = 2, config=config)
+        _, v4_acc, _ = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, text_features_test_all, img_features_test_all, k = 4, config=config)
+        _, v10_acc, _ = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, text_features_test_all, img_features_test_all, k = 10, config=config)
+        _, v50_acc, v50_top5_acc = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, text_features_test_all, img_features_test_all,  k=50, config=config)
+        _, v100_acc, v100_top5_acc = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, text_features_test_all, img_features_test_all,  k=100, config=config)
         test_losses.append(test_loss)
         test_accuracies.append(test_accuracy)
         v2_accs.append(v2_acc)
@@ -401,8 +434,8 @@ def main_train_loop(sub, current_time, eeg_model, train_dataloader, test_dataloa
         # Append results for this epoch
         epoch_results = {
         "epoch": epoch + 1,
-        # "train_loss": train_loss,
-        # "train_accuracy": train_accuracy,
+        "train_loss": train_loss,
+        "train_accuracy": train_accuracy,
         "test_loss": test_loss,
         "test_accuracy": test_accuracy,
         "v2_acc": v2_acc,
@@ -433,7 +466,7 @@ def main_train_loop(sub, current_time, eeg_model, train_dataloader, test_dataloa
             }
         logger.log({
             "Train Loss": train_loss,
-            "Train Accuracy": train_accuracy,
+           #  "Train Accuracy": train_accuracy,
             "Test Loss": test_loss,
             "Test Accuracy": test_accuracy,
             "v2 Accuracy": v2_acc,
@@ -537,7 +570,10 @@ def main():
         eeg_model = globals()[args.encoder_type]()
         eeg_model.to(device)
 
-        optimizer = AdamW(itertools.chain(eeg_model.parameters()), lr=args.lr)
+        image_model = ImageEncoder(vlmodel=vlmodel, preprocess_train=preprocess_train, device=device)
+        image_model.to(device)
+
+        optimizer = AdamW(itertools.chain(eeg_model.parameters(), image_model.parameters()), lr=args.lr)
 
         if args.insubject:
             train_dataset = EEGDataset(args.data_path, subjects=[sub], train=True)
@@ -554,7 +590,7 @@ def main():
         img_features_train_all = train_dataset.img_features
         img_features_test_all = test_dataset.img_features
 
-        results = main_train_loop(sub, current_time, eeg_model, train_loader, test_loader, optimizer, device, 
+        results = main_train_loop(sub, current_time, eeg_model, image_model, train_loader, test_loader, optimizer, device, 
                                   text_features_train_all, text_features_test_all, img_features_train_all, img_features_test_all, config=args, logger=args.logger)
 
 
