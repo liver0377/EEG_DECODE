@@ -90,10 +90,16 @@ class EEGDataset():
             # 如果缓存文件存在，直接加载
             print(f"缓存文件 {cache_file} 已存在，正在加载...")
             self.preprocessed_image_cache = torch.load(cache_file)
+
+            if isinstance(self.preprocessed_image_cache, list):
+                print("缓存加载为列表，转换为张量...")
+                self.preprocessed_image_cache = torch.stack(self.preprocessed_image_cache)
+                torch.save(self.preprocessed_image_cache, cache_file)
             print("加载完成！")
         else:
+
+            preprocessed_image_list = []
             # 初始化缓存列表
-            self.preprocessed_image_cache = []
 
             # 按批处理图片
             print("缓存文件不存在，开始预处理图片...")
@@ -104,8 +110,9 @@ class EEGDataset():
                     preprocess_train(Image.open(img_path).convert("RGB")) for img_path in batch_img_paths
                 ]
                 # 将当前批次的预处理图片追加到缓存中
-                self.preprocessed_image_cache.extend(batch_preprocessed_images)
+                preprocessed_image_list.extend(batch_preprocessed_images)
 
+            self.preprocessed_image_cache = torch.stack(preprocessed_image_list)
             # 将预处理的图片保存到 .pt 文件
             torch.save(self.preprocessed_image_cache, cache_file)
             print(f"图片预处理完成，已缓存到文件 {cache_file}")

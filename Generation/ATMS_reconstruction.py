@@ -222,10 +222,10 @@ class ImageEncoder(nn.Module):
 
     def forward(self, indices, preprocessed_image_cache):
         # 计算图片特征
-        # selected_images = preprocessed_image_cache[indices].to(self.device)
+        selected_images = preprocessed_image_cache[indices].to(self.device)
         start_time = time.time()
 
-        selected_images = torch.stack([preprocessed_image_cache[i] for i in indices], dim=0).to(self.device)
+        # selected_images = torch.stack([preprocessed_image_cache[i] for i in indices], dim=0).to(self.device)
         
         mid_time = time.time()
         # print(f"indices: {indices}")
