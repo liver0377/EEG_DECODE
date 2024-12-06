@@ -1,0 +1,7 @@
+{
+    "data_path": "/home/tom/fsas/eeg_data/preprocessed_eeg_data",
+    "img_directory_training": "/home/tom/fsas/eeg_data/images/training_images",
+    "img_directory_test": "/home/tom/fsas/eeg_data/images/test_images",
+    "features_path":"/home/tom/fsas/eeg_data/preprocessed_eeg_data/features"
+}
+
