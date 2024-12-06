@@ -22,8 +22,8 @@ vlmodel, preprocess_train, feature_extractor = open_clip.create_model_and_transf
     model_type, pretrained='laion2b_s32b_b79k', precision='fp32', device = device)
 
 # 冻结CLIP text encoder的所有参数
-for param in vlmodel.encode_text.parameters():
-    param.requires_grad = False
+# for param in vlmodel.encode_text.parameters():
+#     param.requires_grad = False
 
 import json
 
@@ -57,11 +57,13 @@ class EEGDataset():
         # assert any subjects in subject_list
         assert any(sub in self.subject_list for sub in self.subjects)
 
+        print("loading data")
         self.data, self.labels, self.text, self.img = self.load_data()
         
         self.data = self.extract_eeg(self.data, time_window)
         
         
+        print("caching image features")
         if self.classes is None and self.pictures is None:
             # Try to load the saved features if they exist
             features_filename = os.path.join(f'{model_type}_features_train.pt') if self.train else os.path.join(f'{model_type}_features_test.pt')
@@ -80,7 +82,36 @@ class EEGDataset():
         else:
             self.text_features = self.Textencoder(self.text)
             self.img_features = self.ImageEncoder(self.img)
+        
+        print("caching preprocessed images")
+        cache_file = os.path.join(f"preprocessed_images_train.pt") if self.train else os.path.join(f"preprocessed_images_test.pt")
+        batch_size = 20
+        if os.path.exists(cache_file):
+            # 如果缓存文件存在，直接加载
+            print(f"缓存文件 {cache_file} 已存在，正在加载...")
+            self.preprocessed_image_cache = torch.load(cache_file)
+            print("加载完成！")
+        else:
+            # 初始化缓存列表
+            self.preprocessed_image_cache = []
+
+            # 按批处理图片
+            print("缓存文件不存在，开始预处理图片...")
+            for i in range(0, len(self.img), batch_size):
+                batch_img_paths = self.img[i:i + batch_size]  # 当前批次的图片路径
+                # 对每个批次的图片进行预处理
+                batch_preprocessed_images = [
+                    preprocess_train(Image.open(img_path).convert("RGB")) for img_path in batch_img_paths
+                ]
+                # 将当前批次的预处理图片追加到缓存中
+                self.preprocessed_image_cache.extend(batch_preprocessed_images)
+
+            # 将预处理的图片保存到 .pt 文件
+            torch.save(self.preprocessed_image_cache, cache_file)
+            print(f"图片预处理完成，已缓存到文件 {cache_file}")
+        
             
+    
     def load_data(self):
         data_list = []
         label_list = []
@@ -288,6 +319,9 @@ class EEGDataset():
                 batch_image_features /= batch_image_features.norm(dim=-1, keepdim=True) # (batch_size, F)
 
             image_features_list.append(batch_image_features)
+
+            del image_inputs
+            torch.cuda.empty_cache()
 
         image_features = torch.cat(image_features_list, dim=0)
         
