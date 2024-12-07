@@ -37,6 +37,7 @@ import re
 from subject_layers.Transformer_EncDec import Encoder, EncoderLayer
 from subject_layers.SelfAttention_Family import FullAttention, AttentionLayer
 from subject_layers.Embed import DataEmbedding
+from subject_layers.CLIP import CLIP
 import numpy as np
 from loss import ClipLoss
 import argparse
@@ -649,6 +650,7 @@ def main():
         eeg_model.to(device)
 
         
+        clip_model = CLIP()
         image_model = ImageEncoder(vlmodel=vlmodel, preprocess_train=preprocess_train, device=device)
         image_model.to(device)
 

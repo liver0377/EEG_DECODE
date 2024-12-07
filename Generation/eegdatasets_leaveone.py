@@ -18,8 +18,8 @@ model_type = 'ViT-H-14'
 import open_clip
 # model_type参数指定模型的名称
 # pretrained参数指定使用模型使用的训练集
-vlmodel, preprocess_train, feature_extractor = open_clip.create_model_and_transforms(
-    model_type, pretrained='laion2b_s32b_b79k', precision='fp32', device = device)
+# vlmodel, preprocess_train, feature_extractor = open_clip.create_model_and_transforms(
+#     model_type, pretrained='laion2b_s32b_b79k', precision='fp32', device = device)
 
 # 冻结CLIP text encoder的所有参数
 # for param in vlmodel.encode_text.parameters():
