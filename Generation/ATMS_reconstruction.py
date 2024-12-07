@@ -262,6 +262,11 @@ def train_model(sub, eeg_model, image_model, dataloader, optimizer, device, text
     print("epoch begin")
     for batch_idx, (eeg_data, labels, text, text_features, indices, img, img_features) in enumerate(dataloader):
         print(f"batch: {batch_idx + 1}") 
+        # print(torch.cuda.memory_summary(device, abbreviated=False))
+        allocated = torch.cuda.memory_allocated(device) / (1024 ** 2)  # 转为 MB
+        reserved = torch.cuda.memory_reserved(device) / (1024 ** 2)    # 转为 MB
+        print(f"Allocated memory: {allocated:.2f} MB")
+        print(f"Reserved memory: {reserved:.2f} MB")
 
         
 
@@ -287,16 +292,18 @@ def train_model(sub, eeg_model, image_model, dataloader, optimizer, device, text
         features_list.append(eeg_features)
         
         eeg_end_time = time.time()
-        # print(f"eeg 编码时间: {eeg_end_time - start_time} seconds")
+        print(f"eeg 编码时间: {eeg_end_time - start_time} seconds")
         # 获取图片特征
         # image_inputs = torch.stack([preprocess_train(Image.open(img_path).convert("RGB")) for img_path in img])
         # print(f"img length: {len(img)}")
         # print(f"getting image feature")
         selected_preprocessed_images = preprocessed_image_cache_train_all[indices].to(device)
         img_features_model = image_model(selected_preprocessed_images)
+        img_features_model = img_features_model / img_features_model.norm(dim=-1, keepdim=True)
+        print(f"img_features_model shape: {img_features_model.shape}")
 
         image_end_time = time.time()
-        # print(f"图片编码时间: {image_end_time - eeg_end_time} seconds")
+        print(f"图片编码时间: {image_end_time - eeg_end_time} seconds")
         # img_features_model = img_features_model / img_features_model.norm(dim=-1, keepdim=True)
         
         # 更新全局图片embedding
@@ -304,7 +311,7 @@ def train_model(sub, eeg_model, image_model, dataloader, optimizer, device, text
         img_features_all[indices] = img_features_model.detach()#.cpu()
 
         update_end_time = time.time()
-        # print(f"特征更新时间: {update_end_time - image_end_time} seconds")
+        print(f"特征更新时间: {update_end_time - image_end_time} seconds")
         
         
         # 计算loss
@@ -314,14 +321,16 @@ def train_model(sub, eeg_model, image_model, dataloader, optimizer, device, text
         regress_loss =  mse_loss_fn(eeg_features, img_features_model)
         loss = (alpha * regress_loss *10 + (1 - alpha) * img_loss*10)
 
+        loss_end_time = time.time()
+        print(f"loss 计算时间: {loss_end_time - update_end_time} seconds")
         # print("backward")
         loss.backward()
 
         optimizer.step()
         total_loss += loss.item()
         
-        loss_end_time = time.time()
-        # print(f"反向传播时间: {loss_end_time - update_end_time} seconds")
+        backward_end_time = time.time()
+        print(f"反向传播时间: {backward_end_time - update_end_time} seconds")
  
         # Compute corresponding logits
         # logits_img = logit_scale * eeg_features @ img_features_all.T
@@ -336,9 +345,10 @@ def train_model(sub, eeg_model, image_model, dataloader, optimizer, device, text
         
         total += batch_size
         correct += (predicted == labels).sum().item()
-        del eeg_data, eeg_features, img_features, 
+        del eeg_data, eeg_features, img_features, selected_preprocessed_images
     average_loss = total_loss / (batch_idx+1)
     accuracy = correct / total
+
     return average_loss, accuracy, torch.cat(features_list, dim=0)
 
 def evaluate_model(sub, eeg_model, image_model, dataloader, device, text_features_all, img_features_all, k, preprocessed_image_cache_train_all, preprocessed_image_cache_test_all, config):
@@ -619,7 +629,7 @@ def main():
     parser.add_argument('--name', type=str, default="lr=3e-4_img_pos_pro_eeg", help='Experiment name')
     parser.add_argument('--lr', type=float, default=3e-4, help='Learning rate')
     parser.add_argument('--epochs', type=int, default=40, help='Number of epochs')
-    parser.add_argument('--batch_size', type=int, default=16, help='Batch size')
+    parser.add_argument('--batch_size', type=int, default=8, help='Batch size')
     parser.add_argument('--logger', type=bool, default=True, help='Enable WandB logging')
     parser.add_argument('--gpu', type=str, default='cuda:0', help='GPU device to use')
     parser.add_argument('--device', type=str, choices=['cpu', 'gpu'], default='gpu', help='Device to run on (cpu or gpu)')    
@@ -637,6 +647,16 @@ def main():
     subjects = args.subjects        
     current_time = datetime.datetime.now().strftime("%m-%d_%H-%M")
 
+    # visual encoder config
+    embed_dim = 1024
+    visual_config = {
+        "image_size": 224,
+        "layers": 32,
+        "width": 1280,
+        "head_width": 80,
+        "patch_size": 14
+    }
+
     for sub in subjects:
         if args.insubject:
             train_dataset = EEGDataset(args.data_path, subjects=[sub], train=True)
@@ -652,7 +672,10 @@ def main():
         eeg_model.to(device)
 
         
-        visual_encoder = vlmodel.visual.to(device)
+        visual_encoder = _build_vision_tower(embed_dim, visual_config)
+        visual_state_dict = vlmodel.visual.state_dict()
+
+        visual_encoder.load_state_dict(visual_state_dict) 
         visual_encoder.to(device)
 
         # image_model = ImageEncoder(vlmodel=clip_model, preprocess_train=preprocess_train, device=device)
