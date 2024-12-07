@@ -19,7 +19,7 @@ import numpy as np
 import torch.nn as nn
 import torchvision.transforms as transforms
 import tqdm
-from eegdatasets_leaveone import EEGDataset, vlmodel, preprocess_train
+from eegdatasets_leaveone import EEGDataset,  preprocess_train
 
 from einops.layers.torch import Rearrange, Reduce
 
@@ -651,7 +651,8 @@ def main():
 
         
         clip_model = CLIP()
-        image_model = ImageEncoder(vlmodel=vlmodel, preprocess_train=preprocess_train, device=device)
+        clip_model.load_state_dict(torch.load("/home/tom/.cache/huggingface/hub/models--laion--CLIP-ViT-H-14-laion2B-s32B-b79K/snapshots/de081ac0a0ca8dc9d1533eed1ae884bb8ae1404b/open_clip_pytorch_model.bin"))
+        image_model = ImageEncoder(vlmodel=clip_model, preprocess_train=preprocess_train, device=device)
         image_model.to(device)
 
         optimizer = AdamW(itertools.chain(eeg_model.parameters(), image_model.parameters()), lr=args.lr)
