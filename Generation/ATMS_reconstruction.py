@@ -19,7 +19,7 @@ import numpy as np
 import torch.nn as nn
 import torchvision.transforms as transforms
 import tqdm
-from eegdatasets_leaveone import EEGDataset,  preprocess_train
+from eegdatasets_leaveone import EEGDataset, vlmodel, preprocess_train
 
 from einops.layers.torch import Rearrange, Reduce
 
@@ -37,7 +37,7 @@ import re
 from subject_layers.Transformer_EncDec import Encoder, EncoderLayer
 from subject_layers.SelfAttention_Family import FullAttention, AttentionLayer
 from subject_layers.Embed import DataEmbedding
-from subject_layers.CLIP import CLIP
+from subject_layers.open_clip.model import CLIP, CLIPVisionCfg, CLIPTextCfg, _build_vision_tower
 import numpy as np
 from loss import ClipLoss
 import argparse
@@ -292,7 +292,8 @@ def train_model(sub, eeg_model, image_model, dataloader, optimizer, device, text
         # image_inputs = torch.stack([preprocess_train(Image.open(img_path).convert("RGB")) for img_path in img])
         # print(f"img length: {len(img)}")
         # print(f"getting image feature")
-        img_features_model = image_model(indices, preprocessed_image_cache_train_all)
+        selected_preprocessed_images = preprocessed_image_cache_train_all[indices].to(device)
+        img_features_model = image_model(selected_preprocessed_images)
 
         image_end_time = time.time()
         # print(f"图片编码时间: {image_end_time - eeg_end_time} seconds")
@@ -370,7 +371,8 @@ def evaluate_model(sub, eeg_model, image_model, dataloader, device, text_feature
             #     subject_ids = torch.full((batch_size,), -1, dtype=torch.long).to(device)          
             eeg_features = eeg_model(eeg_data, subject_ids)
             
-            img_features_model = image_model(indices, preprocessed_image_cache_test_all) 
+            selected_preprocessed_images = preprocessed_image_cache_test_all[indices].to(device)
+            img_features_model = image_model(selected_preprocessed_images) 
         
             logit_scale = eeg_model.logit_scale 
             # print(eeg_features.type, text_features.type, img_features.type)
@@ -650,12 +652,13 @@ def main():
         eeg_model.to(device)
 
         
-        clip_model = CLIP()
-        clip_model.load_state_dict(torch.load("/home/tom/.cache/huggingface/hub/models--laion--CLIP-ViT-H-14-laion2B-s32B-b79K/snapshots/de081ac0a0ca8dc9d1533eed1ae884bb8ae1404b/open_clip_pytorch_model.bin"))
-        image_model = ImageEncoder(vlmodel=clip_model, preprocess_train=preprocess_train, device=device)
-        image_model.to(device)
+        visual_encoder = vlmodel.visual.to(device)
+        visual_encoder.to(device)
 
-        optimizer = AdamW(itertools.chain(eeg_model.parameters(), image_model.parameters()), lr=args.lr)
+        # image_model = ImageEncoder(vlmodel=clip_model, preprocess_train=preprocess_train, device=device)
+        # image_model.to(device)
+
+        optimizer = AdamW(itertools.chain(eeg_model.parameters(), visual_encoder.parameters()), lr=args.lr)
 
         text_features_train_all = train_dataset.text_features
         text_features_test_all = test_dataset.text_features
@@ -664,7 +667,7 @@ def main():
         preprocessed_image_cache_train_all = train_dataset.preprocessed_image_cache
         preprocessed_image_cache_test_all = test_dataset.preprocessed_image_cache
 
-        results = main_train_loop(sub, current_time, eeg_model, image_model, train_loader, test_loader, optimizer, device, 
+        results = main_train_loop(sub, current_time, eeg_model, visual_encoder, train_loader, test_loader, optimizer, device, 
                                   text_features_train_all, text_features_test_all, img_features_train_all, img_features_test_all,
                                   preprocessed_image_cache_train_all, preprocessed_image_cache_test_all, config=args, logger=args.logger)
 
