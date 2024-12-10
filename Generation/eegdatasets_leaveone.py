@@ -198,7 +198,7 @@ class EEGDataset():
             if self.train:
                 if subject == self.exclude_subject:  
                     continue            
-                print("subject:", subject)    
+                # print("subject:", subject)    
                 file_name = 'preprocessed_eeg_training.npy'
 
                 file_path = os.path.join(self.data_path, subject, file_name)
@@ -232,7 +232,7 @@ class EEGDataset():
                     for i in range(n_classes):
                         start_index = i * samples_per_class
                         preprocessed_eeg_data_class = preprocessed_eeg_data[start_index: start_index+samples_per_class]
-                        print("preprocessed_eeg_data_class", preprocessed_eeg_data_class.shape)
+                        # print("preprocessed_eeg_data_class", preprocessed_eeg_data_class.shape)
                         labels = torch.full((samples_per_class,), i, dtype=torch.long).detach()  
                         data_list.append(preprocessed_eeg_data_class)
                         label_list.append(labels)
