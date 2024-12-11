@@ -31,3 +31,5 @@ Retrieval/wandb
 **/**/__pycache__/
 **/*.pt
 **/*.pyc
+log.txt
+nohup.out
