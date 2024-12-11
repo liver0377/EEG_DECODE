@@ -281,7 +281,7 @@ def train_model(sub, eeg_model, image_model, dataloader, optimizer, device, text
             # 更新全局图片embedding
             # print(f"updating global image embedding")
             # if (batch_idx +  1) % 10 == 0:
-            img_features_all[indices] = img_features_model.detach().float()#.cpu()
+            # img_features_all[indices] = img_features_model.detach().float()#.cpu()
 
             # update_end_time = time.time()
 
@@ -310,13 +310,13 @@ def train_model(sub, eeg_model, image_model, dataloader, optimizer, device, text
         # backward_end_time = time.time()
         # print(f"反向传播时间: {backward_end_time - update_end_time} seconds")
  
-        # Compute corresponding logits
-        # logits_img = logit_scale * eeg_features @ img_features_all.T
-        # logits_single = logits_img
-        # predicted = torch.argmax(logits_single, dim=1) # (n_batch, ) ∈ {0, 1, ..., n_cls-1}
-        
         # 计算精确率
-        img_features_1654 = img_features_all[::10].to(device).float()
+        img_features_1654 = []
+        for i in range(1654):
+            img_features = image_model.module(preprocessed_image_cache_train_all[i * 10]).float()
+            img_features_1654.append(img_features)
+        img_features_1654 = torch.cat(img_features_1654, dim=-1)
+        # img_features_1654 = img_features_all[::10].to(device).float()
         logits_img = logit_scale * eeg_features @ img_features_1654.T
         logits_single = logits_img
         predicted = torch.argmax(logits_single, dim=1)
@@ -330,11 +330,10 @@ def train_model(sub, eeg_model, image_model, dataloader, optimizer, device, text
 
     return average_loss, accuracy# , torch.cat(features_list, dim=0)
 
-def evaluate_model(sub, eeg_model, image_model, dataloader, device, text_features_all, img_features_all, k,  preprocessed_image_cache_test_all, config):
+def evaluate_model(sub, eeg_model, image_model, dataloader, device, img_features_all, k,  preprocessed_image_cache_test_all, config):
     eeg_model.eval()
     image_model.eval()
 
-    text_features_all = text_features_all.to(device).float()
     img_features_all = img_features_all.to(device).float()
     total_loss = 0
     correct = 0
@@ -342,22 +341,18 @@ def evaluate_model(sub, eeg_model, image_model, dataloader, device, text_feature
     alpha = 0.99
     top5_correct = 0
     top5_correct_count = 0
-    all_labels = set(range(text_features_all.size(0)))
+    all_labels = set(range(img_features_all.size(0)))
     top5_acc = 0
     mse_loss_fn = nn.MSELoss()
     with torch.no_grad():
-        for batch_idx, (eeg_data, labels, text, text_features, indices, img, img_features) in enumerate(dataloader):
+        for batch_idx, (eeg_data, labels, _, _, indices, _, _) in enumerate(dataloader):
             eeg_data = eeg_data.to(device)
-            text_features = text_features.to(device).float()
             labels = labels.to(device)
             # img_features = img_features.to(device).float()
             
             batch_size = eeg_data.size(0)  # Assume the first element is the data tensor
             subject_id = extract_id_from_string(sub)
-            # eeg_data = eeg_data.permute(0, 2, 1)
             subject_ids = torch.full((batch_size,), subject_id, dtype=torch.long).to(device)
-            # if not config.insubject:
-            #     subject_ids = torch.full((batch_size,), -1, dtype=torch.long).to(device)          
             eeg_features = eeg_model.module(eeg_data, subject_ids)
             
             selected_preprocessed_images = preprocessed_image_cache_test_all[indices].to(device)
@@ -365,7 +360,6 @@ def evaluate_model(sub, eeg_model, image_model, dataloader, device, text_feature
             img_features_model = img_features_model / img_features_model.norm(dim=-1, keepdim=True)
         
             logit_scale = eeg_model.module.logit_scale 
-            # print(eeg_features.type, text_features.type, img_features.type)
             img_loss = eeg_model.module.loss_func(eeg_features, img_features_model, logit_scale)
             regress_loss =  mse_loss_fn(eeg_features, img_features_model)
             loss = (alpha * regress_loss *10 + (1 - alpha) * img_loss*10)
@@ -377,18 +371,13 @@ def evaluate_model(sub, eeg_model, image_model, dataloader, device, text_feature
                 possible_classes = list(all_labels - {label.item()})
                 selected_classes = random.sample(possible_classes, k-1) + [label.item()]
                 selected_img_features = img_features_all[selected_classes]
-                selected_text_features = text_features_all[selected_classes]
                 
                 if k==200:
                     # Compute corresponding logits
                     logits_img = logit_scale * eeg_features[idx] @ selected_img_features.T
                     logits_single = logits_img
-                    # print("logits_single", logits_single.shape)
-                    # Get predicted class
-                    # predicted_label = selected_classes[torch.argmax(logits_single).item()]
                     predicted_label = selected_classes[torch.argmax(logits_single).item()] # (n_batch, ) ∈ {0, 1, ..., n_cls-1}
                     if predicted_label == label.item():
-                        # print("predicted_label", predicted_label)
                         correct += 1
                     
                     # logits_single is the model output, assumed to be shape (n_batch, n_classes)
@@ -421,12 +410,7 @@ def evaluate_model(sub, eeg_model, image_model, dataloader, device, text_feature
                     selected_classes = random.sample(possible_classes, k-1) + [label.item()]
                     # Compute corresponding logits
                     logits_img = logit_scale * eeg_features[idx] @ selected_img_features.T
-                    # logits_text = logit_scale * eeg_features[idx] @ selected_text_features.T
-                    # logits_single = (logits_text + logits_img) / 2.0
                     logits_single = logits_img
-                    # print("logits_single", logits_single.shape)
-                    # Get predicted class
-                    # predicted_label = selected_classes[torch.argmax(logits_single).item()]
                     predicted_label = selected_classes[torch.argmax(logits_single).item()] # (n_batch, ) ∈ {0, 1, ..., n_cls-1}
                     if predicted_label == label.item():
                         correct += 1
@@ -461,36 +445,47 @@ def main_train_loop(sub, current_time, eeg_model, image_model, train_dataloader,
         # Train the model
         train_dataloader.sampler.set_epoch(epoch)
 
-        train_loss, train_accuracy = train_model(sub, eeg_model, image_model, train_dataloader, optimizer, device, text_features_train_all, img_features_train_all, preprocessed_image_cache_train_all, preprocessed_image_cache_test_all, config=config, scaler=scaler)
-        if ddp_utils.is_main_process():
-            if (epoch +1) % 5 == 0:                    
-                # Save the model every 5 epochs                  
-                if config.insubject==True:       
-                    os.makedirs(f"./models/contrast/{config.encoder_type}/{sub}/{current_time}", exist_ok=True)             
-                    os.makedirs(f"./models/contrast/ImageEncoder/{sub}/{current_time}", exist_ok=True)
-                    eeg_file_path = f"./models/contrast/{config.encoder_type}/{sub}/{current_time}/{epoch+1}.pth"
-                    image_encoder_file_path = f"./models/contrast/ImageEncoder/{sub}/{current_time}/{epoch+1}.pth"
-                    torch.save(eeg_model.module.state_dict(), eeg_file_path)            
-                    torch.save(image_model.module.state_dict(), image_encoder_file_path)
-                else:                
-                    os.makedirs(f"./models/contrast/{config.encoder_type}/{sub}/{current_time}", exist_ok=True)             
-                    os.makedirs(f"./models/contrast/ImageEncoder/{sub}/{current_time}", exist_ok=True)
-                    eeg_file_path = f"./models/contrast/{config.encoder_type}/{sub}/{current_time}/{epoch+1}.pth"
-                    image_encoder_file_path = f"./models/contrast/ImageEncoder/{sub}/{current_time}/{epoch+1}.pth"
-                    torch.save(eeg_model.module.state_dict(), eeg_file_path)            
-                    torch.save(image_model.module.state_dict(), image_encoder_file_path) 
-                print(f"Model saved in {eeg_file_path}!")
-            train_losses.append(train_loss)
+        
+        if not config.evaluate:
+            train_loss, train_accuracy = train_model(sub, eeg_model, image_model, train_dataloader, optimizer, device, text_features_train_all, img_features_train_all, preprocessed_image_cache_train_all, preprocessed_image_cache_test_all, config=config, scaler=scaler)
+            if ddp_utils.is_main_process():
+                if (epoch +1) % 5 == 0:                    
+                    # Save the model every 5 epochs                  
+                    if config.insubject==True:       
+                        os.makedirs(f"./models/contrast/{config.encoder_type}/{sub}/{current_time}", exist_ok=True)             
+                        os.makedirs(f"./models/contrast/ImageEncoder/{sub}/{current_time}", exist_ok=True)
+                        eeg_file_path = f"./models/contrast/{config.encoder_type}/{sub}/{current_time}/{epoch+1}.pth"
+                        image_encoder_file_path = f"./models/contrast/ImageEncoder/{sub}/{current_time}/{epoch+1}.pth"
+                        torch.save(eeg_model.module.state_dict(), eeg_file_path)            
+                        torch.save(image_model.module.state_dict(), image_encoder_file_path)
+                    else:                
+                        os.makedirs(f"./models/contrast/{config.encoder_type}/{sub}/{current_time}", exist_ok=True)             
+                        os.makedirs(f"./models/contrast/ImageEncoder/{sub}/{current_time}", exist_ok=True)
+                        eeg_file_path = f"./models/contrast/{config.encoder_type}/{sub}/{current_time}/{epoch+1}.pth"
+                        image_encoder_file_path = f"./models/contrast/ImageEncoder/{sub}/{current_time}/{epoch+1}.pth"
+                        torch.save(eeg_model.module.state_dict(), eeg_file_path)            
+                        torch.save(image_model.module.state_dict(), image_encoder_file_path) 
+                    print(f"Model saved in {eeg_file_path}!")
+                    print(f"Visual Encoder Model saved in {image_encoder_file_path}")
+                train_losses.append(train_loss)
             # train_accuracies.append(train_accuracy)
 
 
             # Evaluate the model
-            test_loss, test_accuracy, top5_acc = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, text_features_test_all, img_features_test_all,k=200, preprocessed_image_cache_test_all=preprocessed_image_cache_test_all, config=config)
-            _, v2_acc, _ = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, text_features_test_all, img_features_test_all, k = 2, preprocessed_image_cache_test_all=preprocessed_image_cache_test_all, config=config)
-            _, v4_acc, _ = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, text_features_test_all, img_features_test_all, k = 4, preprocessed_image_cache_test_all=preprocessed_image_cache_test_all, config=config)
-            _, v10_acc, _ = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, text_features_test_all, img_features_test_all, k = 10, preprocessed_image_cache_test_all=preprocessed_image_cache_test_all, config=config)
-            _, v50_acc, v50_top5_acc = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, text_features_test_all, img_features_test_all,  k=50, preprocessed_image_cache_test_all=preprocessed_image_cache_test_all, config=config)
-            _, v100_acc, v100_top5_acc = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, text_features_test_all, img_features_test_all,  k=100, preprocessed_image_cache_test_all=preprocessed_image_cache_test_all, config=config)
+            # 每一个epoch都要重新对img_features_test_all进行计算
+        if ddp_utils.is_main_process():
+            img_features_test_all = []
+            for img in preprocessed_image_cache_test_all:
+                img_embedding = eeg_model.module(img) 
+                img_features_test_all.append(img_embedding)
+            img_features_test_all = torch.cat(img_features_test_all, dim=0)
+                
+            test_loss, test_accuracy, top5_acc = evaluate_model(sub, eeg_model, image_model, test_dataloader, device,  img_features_test_all,k=200, preprocessed_image_cache_test_all=preprocessed_image_cache_test_all, config=config)
+            _, v2_acc, _ = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, img_features_test_all, k = 2, preprocessed_image_cache_test_all=preprocessed_image_cache_test_all, config=config)
+            _, v4_acc, _ = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, img_features_test_all, k = 4, preprocessed_image_cache_test_all=preprocessed_image_cache_test_all, config=config)
+            _, v10_acc, _ = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, img_features_test_all, k = 10, preprocessed_image_cache_test_all=preprocessed_image_cache_test_all, config=config)
+            _, v50_acc, v50_top5_acc = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, img_features_test_all,  k=50, preprocessed_image_cache_test_all=preprocessed_image_cache_test_all, config=config)
+            _, v100_acc, v100_top5_acc = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, img_features_test_all,  k=100, preprocessed_image_cache_test_all=preprocessed_image_cache_test_all, config=config)
             test_losses.append(test_loss)
             test_accuracies.append(test_accuracy)
             v2_accs.append(v2_acc)
@@ -500,8 +495,8 @@ def main_train_loop(sub, current_time, eeg_model, image_model, train_dataloader,
             # Append results for this epoch
             epoch_results = {
             "epoch": epoch + 1,
-            "train_loss": train_loss,
-            "train_accuracy": train_accuracy,
+            # "train_loss": train_loss,
+            # "train_accuracy": train_accuracy,
             "test_loss": test_loss,
             "test_accuracy": test_accuracy,
             "v2_acc": v2_acc,
@@ -522,8 +517,8 @@ def main_train_loop(sub, current_time, eeg_model, image_model, train_dataloader,
             
                 best_epoch_info = {
                     "epoch": epoch + 1,
-                    "train_loss": train_loss,
-                    "train_accuracy": train_accuracy,
+                    # "train_loss": train_loss,
+                    # "train_accuracy": train_accuracy,
                     "test_loss": test_loss,
                     "test_accuracy": test_accuracy,
                     "v2_acc":v2_acc,
@@ -531,7 +526,7 @@ def main_train_loop(sub, current_time, eeg_model, image_model, train_dataloader,
                     "v10_acc":v10_acc
                 }
             logger.log({
-                "Train Loss": train_loss,
+               #  "Train Loss": train_loss,
                #  "Train Accuracy": train_accuracy,
                 "Test Loss": test_loss,
                 "Test Accuracy": test_accuracy,
@@ -541,7 +536,8 @@ def main_train_loop(sub, current_time, eeg_model, image_model, train_dataloader,
                 "Epoch": epoch
             })
 
-            print(f"Epoch {epoch + 1}/{config.epochs} - Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}, Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}, Top5 Accuracy: {top5_acc:.4f}")
+            print(f"Epoch {epoch + 1}/{config.epochs} - Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}, Top5 Accuracy: {top5_acc:.4f}")
+            # print(f"Epoch {epoch + 1}/{config.epochs} - Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}, Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}, Top5 Accuracy: {top5_acc:.4f}")
             print(f"Epoch {epoch + 1}/{config.epochs} - v2 Accuracy:{v2_acc} - v4 Accuracy:{v4_acc} - v10 Accuracy:{v10_acc} - v50 Accuracy:{v50_acc} - v100 Accuracy:{v100_acc}")
   
         # # Load best model weights
@@ -626,6 +622,7 @@ def main():
     parser.add_argument('--subjects', nargs='+', default=['sub-01', 'sub-02', 'sub-03', 'sub-04', 'sub-05', 'sub-06', 'sub-07', 'sub-08', 'sub-09', 'sub-10'], help='List of subject IDs (default: sub-01 to sub-10)')    
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
+    parser.add_argument('--evaluate', action='store_true')
     # parser.add_argument('--distributed', default=True, type=bool)
     args = parser.parse_args()
 
@@ -706,6 +703,9 @@ def main():
         preprocessed_image_cache_train_all = train_dataset.preprocessed_image_cache
         preprocessed_image_cache_test_all = test_dataset.preprocessed_image_cache
 
+        if args.evaluate:
+            eeg_model.load_state_dict(torch.load("models/contrast/ATMS/sub-08/12-11_11-30/25.pth"))
+            visual_encoder.load_state_dict(torch.load("models/contrast/ImageEncoder/sub-08/12-11_11-30/25.pth"))
         results = main_train_loop(sub, current_time, eeg_model, visual_encoder, train_loader, test_loader, optimizer, device, 
                                   text_features_train_all, text_features_test_all, img_features_train_all, img_features_test_all,
                                   preprocessed_image_cache_train_all, preprocessed_image_cache_test_all, config=args, logger=args.logger, scaler=scaler)
