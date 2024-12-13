@@ -71,7 +71,7 @@ class EEGDataset():
         print("caching image features")
         if self.classes is None and self.pictures is None:
             # Try to load the saved features if they exist
-            features_filename = os.path.join(f'{model_type}_features_train.pt') if self.train else os.path.join(f'{model_type}_features_test.pt')
+            features_filename = os.path.join("/home/tom/fsas/eeg_data", f'{model_type}_features_train.pt') if self.train else os.path.join("/home/tom/fsas/eeg_data", f'{model_type}_features_test.pt')
             
             if os.path.exists(features_filename) :
                 saved_features = torch.load(features_filename)
@@ -89,7 +89,8 @@ class EEGDataset():
             self.img_features = self.ImageEncoder(self.img)
         
         print("caching preprocessed images")
-        cache_file = os.path.join(f"preprocessed_images_train.pt") if self.train else os.path.join(f"preprocessed_images_test.pt")
+
+        cache_file = os.path.join("/home/tom/fsas/eeg_data", "preprocessed_images_train.pt") if self.train else os.path.join("/home/tom/fsas/eeg_data", "preprocessed_images_test.pt")
         batch_size = 20
         if os.path.exists(cache_file):
             # 如果缓存文件存在，直接加载

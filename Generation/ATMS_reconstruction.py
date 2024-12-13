@@ -306,7 +306,7 @@ def evaluate_model(sub, eeg_model, image_model, dataloader, device, img_features
     eeg_model.eval()
     image_model.eval()
 
-    img_features_all = img_features_all.to(device).float()
+    # img_features_all = img_features_all.to(device).float()
     total_loss = 0
     correct = 0
     total = 0
@@ -342,7 +342,7 @@ def evaluate_model(sub, eeg_model, image_model, dataloader, device, img_features
                 # First select k-1 classes excluding the correct class
                 possible_classes = list(all_labels - {label.item()})
                 selected_classes = random.sample(possible_classes, k-1) + [label.item()]
-                selected_img_features = img_features_all[selected_classes]
+                selected_img_features = img_features_all[selected_classes].to(device).float()
                 
                 if k==200:
                     # Compute corresponding logits
@@ -389,7 +389,7 @@ def evaluate_model(sub, eeg_model, image_model, dataloader, device, img_features
                     total += 1
                 else:
                     print("Error.")
-            del eeg_data, eeg_features, img_features
+            # del eeg_data, eeg_features, img_features
     average_loss = total_loss / (batch_idx+1)
     accuracy = correct / total
     top5_acc = top5_correct_count / total
@@ -420,13 +420,13 @@ def main_train_loop(sub, current_time, eeg_model, image_model, train_dataloader,
 
         
         if not config.evaluate:
-            train_loss,  = train_model(sub, eeg_model, image_model, train_dataloader, optimizer, device,  img_features_train_all, preprocessed_image_cache_train_all,config=config, scaler=scaler)
+            train_loss  = train_model(sub, eeg_model, image_model, train_dataloader, optimizer, device,  img_features_train_all, preprocessed_image_cache_train_all,config=config, scaler=scaler)
             if ddp_utils.is_main_process():
                 if (epoch +1) % 5 == 0:                    
                     # Save the model every 5 epochs                  
                     if config.insubject==True:       
                         os.makedirs(f"/home/tom/fsas/eeg_data/models/contrast/{config.encoder_type}/{sub}/{current_time}", exist_ok=True)
-                        os.makedirs(f"/home/tom/fsas/eeg_data/ImageEncoder/{sub}/{current_time}", exist_ok=True)
+                        os.makedirs(f"/home/tom/fsas/eeg_data/models/contrast/ImageEncoder/{sub}/{current_time}", exist_ok=True)
                         eeg_encoder_file_path = f"/home/tom/fsas/eeg_data/models/contrast/{config.encoder_type}/{sub}/{current_time}/{epoch+1}.pth"
                         image_encoder_file_path = f"/home/tom/fsas/eeg_data/models/contrast/ImageEncoder/{sub}/{current_time}/{epoch+1}.pth"
                         # os.makedirs(f"./models/contrast/{config.encoder_type}/{sub}/{current_time}", exist_ok=True)             
@@ -437,7 +437,7 @@ def main_train_loop(sub, current_time, eeg_model, image_model, train_dataloader,
                         torch.save(image_model.module.state_dict(), image_encoder_file_path)
                     else:                
                         os.makedirs(f"/home/tom/fsas/eeg_data/models/contrast/{config.encoder_type}/{sub}/{current_time}", exist_ok=True)
-                        os.makedirs(f"/home/tom/fsas/eeg_data/ImageEncoder/{sub}/{current_time}", exist_ok=True)
+                        os.makedirs(f"/home/tom/fsas/eeg_data/models/contrast/ImageEncoder/{sub}/{current_time}", exist_ok=True)
                         eeg_encoder_file_path = f"/home/tom/fsas/eeg_data/models/contrast/{config.encoder_type}/{sub}/{current_time}/{epoch+1}.pth"
                         image_encoder_file_path = f"/home/tom/fsas/eeg_data/models/contrast/ImageEncoder/{sub}/{current_time}/{epoch+1}.pth"
                         # os.makedirs(f"./models/contrast/{config.encoder_type}/{sub}/{current_time}", exist_ok=True)             
@@ -455,11 +455,27 @@ def main_train_loop(sub, current_time, eeg_model, image_model, train_dataloader,
             # Evaluate the model
             # 每一个epoch都要重新对img_features_test_all进行计算
         if ddp_utils.is_main_process():
-            img_features_test_all = []
-            for img in preprocessed_image_cache_test_all:
-                img_embedding = eeg_model.module(img) 
-                img_features_test_all.append(img_embedding)
-            img_features_test_all = torch.cat(img_features_test_all, dim=0)
+            with torch.no_grad():
+                batch_size = 1 
+                num_samples = preprocessed_image_cache_test_all.size(0)
+                img_features_test_all = []
+                for i in range(0, num_samples, batch_size):
+                    batch = preprocessed_image_cache_test_all[i:i+batch_size].to(device)
+                    img_embedding = image_model.module(batch).cpu().float()
+                    img_embedding = img_embedding / img_embedding.norm(dim=-1, keepdim=True)
+                    img_features_test_all.append(img_embedding)
+
+                # 拼接所有批次结果
+                img_features_test_all = torch.cat(img_features_test_all, dim=0)  
+
+            # preprocessed_image_cache_test_all = preprocessed_image_cache_test_all.to(device)
+            # for img in preprocessed_image_cache_test_all:
+            #     img.to(device)
+            #     img_embedding = image_model.module(img) 
+            #     img_features_test_all.append(img_embedding)
+            # img_features_test_all = image_model.module(preprocessed_image_cache_test_all).float()
+            # img_features_test_all = img_features_test_all / img_features_test_all.norm(dim=-1, keepdim=True)
+            # img_features_test_all = torch.cat(img_features_test_all, dim=0)
                 
             test_loss, test_accuracy, top5_acc = evaluate_model(sub, eeg_model, image_model, test_dataloader, device,  img_features_test_all,k=200, preprocessed_image_cache_test_all=preprocessed_image_cache_test_all, config=config)
             _, v2_acc, _ = evaluate_model(sub, eeg_model, image_model, test_dataloader, device, img_features_test_all, k = 2, preprocessed_image_cache_test_all=preprocessed_image_cache_test_all, config=config)
@@ -594,7 +610,7 @@ def main():
     parser.add_argument('--name', type=str, default="lr=3e-4_img_pos_pro_eeg", help='Experiment name')
     parser.add_argument('--lr', type=float, default=3e-4, help='Learning rate')
     parser.add_argument('--epochs', type=int, default=40, help='Number of epochs')
-    parser.add_argument('--batch_size', type=int, default=8, help='Batch size')
+    parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
     parser.add_argument('--logger', type=bool, default=True, help='Enable WandB logging')
     parser.add_argument('--gpu', type=str, default='cuda', help='GPU device to use')
     parser.add_argument('--device', type=str, choices=['cpu', 'gpu'], default='gpu', help='Device to run on (cpu or gpu)')    
