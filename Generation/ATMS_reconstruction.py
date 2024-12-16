@@ -681,8 +681,8 @@ def main():
         visual_encoder.to(device)
 
         if args.evaluate:
-            eeg_encoder_ckpt_path = "/home/tom/fsas/eeg_data/models/contrast/ATMS/sub-08/12-11_11-30/25.pth"
-            visual_encoder_ckpt_path = "/home/tom/fsas/eeg_data/models/contrast/ImageEncoder/sub-08/12-11_11-30/25.pth"
+            eeg_encoder_ckpt_path = "/home/tom/fsas/eeg_data/models/contrast/ATMS/sub-08/12-13_17-57/40.pth"
+            visual_encoder_ckpt_path = "/home/tom/fsas/eeg_data/models/contrast/ImageEncoder/sub-08/12-13_17-57/40.pth"
             eeg_model.load_state_dict(torch.load(eeg_encoder_ckpt_path, weights_only=True))
             visual_encoder.load_state_dict(torch.load(visual_encoder_ckpt_path, weights_only=True)) 
         else:

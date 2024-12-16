@@ -300,7 +300,7 @@ class Pipe:
                 h_embeds = batch['h_embedding'].to(device)
                 N = h_embeds.shape[0]
 
-                # 1. randomly replecing c_embeds to None
+                # 1. randomly replacing c_embeds to None
                 if torch.rand(1) < 0.1:
                     c_embeds = None
 
