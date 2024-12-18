@@ -348,8 +348,8 @@ class EEGDataset():
         
         if self.pictures is None:
             if self.classes is None:
-                index_n_sub_train = self.n_cls * 10 * 4 # 一个sub中的所有eeg数据个数
-                index_n_sub_test = self.n_cls * 1 * 80
+                index_n_sub_train = self.n_cls * 10 * 4 # 66160
+                index_n_sub_test = self.n_cls * 1 * 80 # 16000
             else:
                 index_n_sub_test = len(self.classes)* 1 * 80
                 index_n_sub_train = len(self.classes)* 10 * 4
@@ -362,7 +362,7 @@ class EEGDataset():
             if self.train:
                 img_index = (index % index_n_sub_train) // (4) 
             else:
-                img_index = (index % index_n_sub_test)
+                img_index = (index % index_n_sub_test) 
         else:
             if self.classes is None:
                 index_n_sub_train = self.n_cls * 1 * 4
@@ -383,6 +383,8 @@ class EEGDataset():
         # print("text_index", text_index)
         # print("self.text", self.text)
         # print("self.text", len(self.text))
+        # if not self.train:
+        #     print(f"evaluating: len : {self.__len__()}, img_index: {img_index}")
         text = self.text[text_index]
         img = self.img[img_index]
         

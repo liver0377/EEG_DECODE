@@ -30,9 +30,9 @@ from torch import Tensor
 import itertools
 import math
 
-from layers.Transformer_EncDec import Encoder, EncoderLayer
-from layers.SelfAttention_Family import FullAttention, AttentionLayer
-from layers.Embed import DataEmbedding_inverted
+from subject_layers.Transformer_EncDec import Encoder, EncoderLayer
+from subject_layers.SelfAttention_Family import FullAttention, AttentionLayer
+from subject_layers.Embed import DataEmbedding_inverted
 import numpy as np
 
 from diffusers.utils import load_image
@@ -179,6 +179,9 @@ class Enc_eeg(nn.Sequential):
         )
 
 class Proj_img(nn.Sequential):
+    """
+    VAE Image Encoder
+    """
     def __init__(self, embedding_dim=1024, proj_dim=1024, drop_proj=0.3):
         super().__init__(
             nn.Linear(embedding_dim, proj_dim),
@@ -189,8 +192,8 @@ class Proj_img(nn.Sequential):
             )),
             nn.LayerNorm(proj_dim),
         )
-    def forward(self, x):
-        return x 
+    # def forward(self, x):
+    #     return x 
 
 class Proj_eeg(nn.Sequential):
     def __init__(self, embedding_dim=1440, proj_dim=1024, drop_proj=0.5):
@@ -215,6 +218,7 @@ clip_loss = ClipLoss()
 import torch
 import torch.nn as nn
 import numpy as np
+
 class encoder_low_level(nn.Module):
     def __init__(self, num_channels=63, sequence_length=250, num_subjects=1, num_features=64, num_latents=1024, num_blocks=1):
         super(encoder_low_level, self).__init__()        
@@ -252,10 +256,13 @@ class encoder_low_level(nn.Module):
 
     def forward(self, x):
         # Apply subject-wise linear layer
+        # 这里仅使用了一个线性层
         x = self.subject_wise_linear[0](x)  # Output shape: (batchsize, 63, 128)
+        # print(f"before view, x shape: {x.shape}")
         # Reshape to match the input size for the upsampler
         x = x.view(x.size(0), 8064, 1, 1)  # Reshape to (batch_size, 8064, 1, 1)
         out = self.upsampler(x)  # Pass through the upsampler
+        # out.shape: (batchsize, 4, 64, 64)
         return out
 
 from loss import ClipLoss
@@ -280,37 +287,29 @@ def train_model(eegmodel, imgmodel, dataloader, optimizer, device, text_features
     for batch_idx, (eeg_data, labels, text, text_features, img, img_features) in enumerate(dataloader):
         eeg_data = eeg_data.to(device)
         # eeg_data = eeg_data.permute(0, 2, 1)
-        img_features = img_features.to(device).float()
+        img_features = img_features.to(device).float()   # low level图片embedding
         labels = labels.to(device)
         
         optimizer.zero_grad()
         eeg_features = eegmodel(eeg_data[:, :, :250]).float()
-        # img_features_outputs = regression(eeg_features).float()
-        # features_list.append(eeg_features)
         logit_scale = eegmodel.logit_scale
-        # print("eeg_features", eeg_features.shape)
-        # print("img_features", img_features.shape)
-        # contras_loss = clip_loss(eeg_features.view(eeg_features.size(0), -1), img_features.view(img_features.size(0), -1), logit_scale)
-        # img_loss = eegmodel.loss_func(eeg_features, img_features, logit_scale)
-        # text_loss = eegmodel.loss_func(eeg_features, text_features, logit_scale)
-        # contrastive_loss = img_loss
-        # print("text_loss", text_loss)
-        # print("img_loss", img_loss)
+   
         
         regress_loss =  mae_loss_fn(eeg_features, img_features)
-        # l2_norm = sum(p.pow(2.0).sum() for p in model.parameters())
-        # loss = (regress_loss + ridge_lambda * l2_norm)       
         loss = regress_loss
         loss.backward()
         
         optimizer.step()
         total_loss += loss.item()
+        # 在每个epoch的开头生成batch_size个图片
+        # 1. reconstructed_image_label.png:  使用eeg feature生成
+        # 2. train_image_label.png: 使用image feature生成
         with torch.no_grad():
             if not image_reconstructed:
                 z = eeg_features
-                x_rec = vae.decode(z).sample
-                x_train = vae.decode(img_features).sample
-                image_rec = image_processor.postprocess(x_rec, output_type='pil')
+                x_rec = vae.decode(z).sample                       # vae.decode()返回图像分布
+                x_train = vae.decode(img_features).sample          # sample返回tensor
+                image_rec = image_processor.postprocess(x_rec, output_type='pil')  # postprocess()将图片由tensor类型转变为pil类型
                 image_train = image_processor.postprocess(x_train, output_type='pil')
                 # Use label to create a unique file name
                 for i, label in enumerate(labels.tolist()):                    
@@ -359,11 +358,12 @@ def evaluate_model(eegmodel, imgmodel, dataloader, device, text_features_all, im
         os.makedirs(epoch_save_dir)
     fg = True
     with torch.no_grad():
-        for batch_idx, (eeg_data, labels, text, text_features, img, img_features) in enumerate(dataloader):            
+        for batch_idx, (eeg_data, labels, _, _, img, img_features) in enumerate(dataloader):            
             eeg_data = eeg_data.to(device)
             # eeg_data = eeg_data.permute(0, 2, 1)
             labels = labels.to(device)
             img_features = img_features.to(device).float()
+            # print(f" eeg_data[:, :, :250] shape: {eeg_data[:, :, :250].shape}")
             eeg_features = eegmodel(eeg_data[:, :, :250]).float()
             logit_scale = eegmodel.logit_scale
             regress_loss = mae_loss_fn(eeg_features, img_features)
@@ -382,7 +382,8 @@ def evaluate_model(eegmodel, imgmodel, dataloader, device, text_features_all, im
                 # image_rec[0].save(save_path)
                 
                 # Use label to create a unique file name
-                for i, label in enumerate(labels.tolist()):  
+                # 每10个epoch一次，生成所有测试集label的low-level图片
+                for i, label in enumerate(labels.tolist()): 
                     base_save_path = os.path.join(epoch_save_dir, f"reconstructed_image_{label}_0.png")
                     save_path = base_save_path
                     k = 0
@@ -403,35 +404,31 @@ def evaluate_model(eegmodel, imgmodel, dataloader, device, text_features_all, im
 def main_train_loop(sub, current_time, eeg_model, img_model, train_dataloader, test_dataloader, optimizer, device, 
                     text_features_train_all, text_features_test_all, img_features_train_all, img_features_test_all, config, logger=None):
     # Introduce cosine annealing scheduler
-    scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=config['epochs'], eta_min=1e-6)
+    scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.epochs, eta_min=1e-6)
     logger = wandb_logger(config) if logger else None
     logger.watch(eeg_model,logger) 
     logger.watch(img_model,logger) 
     train_losses, train_accuracies = [], []
     test_losses, test_accuracies = [], []
-    v2_accs = []
-    v4_accs = []
-    v10_accs = []
+
 
     best_accuracy = 0.0
-    best_model_weights = None
-    best_epoch_info = {}
     results = []  # List to store results for each epoch
     
-    for epoch in range(config['epochs']):
+    for epoch in range(config.epochs):
 
         # Add date-time prefix to save_dir
-        train_save_dir = f'{current_time}_vae_train_imgs'
+        train_save_dir = os.path.join("/home/tom/fsas/eeg_data/preprocessed_eeg_data", 'generated_images', f'{current_time}_vae_train_imgs')
         train_loss, train_accuracy, features_tensor = train_model(eeg_model, img_model, train_dataloader, optimizer, device, text_features_train_all, img_features_train_all, save_dir=train_save_dir, epoch=epoch)
         if (epoch +1) % 5 == 0:                    
             # Get the current time and format it as a string (e.g., '2024-01-17_15-30-00')                  
-            if config['insubject']==True:       
-                os.makedirs(f"./models/contrast/{config['encoder_type']}/{sub}/{current_time}", exist_ok=True)             
-                file_path = f"./models/contrast/{config['encoder_type']}/{sub}/{current_time}/{epoch+1}.pth"
+            if config.insubject==True:       
+                os.makedirs(f"/home/tom/fsas/eeg_data/preprocessed_eeg_data/models/contrast/{config.encoder_type}/{sub}/{current_time}", exist_ok=True)             
+                file_path = f"/home/tom/fsas/eeg_data/preprocessed_eeg_data/models/contrast/{config.encoder_type}/{sub}/{current_time}/{epoch+1}.pth"
                 torch.save(eeg_model.state_dict(), file_path)            
             else:                
-                os.makedirs(f"./models/contrast/across/{config['encoder_type']}/{current_time}", exist_ok=True)             
-                file_path = f"./models/contrast/across/{config['encoder_type']}/{current_time}/{epoch+1}.pth"
+                os.makedirs(f"/home/tom/fsas/eeg_data/preprocessed_eeg_data/models/contrast/across/{config.encoder_type}/{current_time}", exist_ok=True)             
+                file_path = f"/home/tom/fsas/eeg_data/preprocessed_eeg_data/models/contrast/across/{config.encoder_type}/{current_time}/{epoch+1}.pth"
                 torch.save(eeg_model.state_dict(), file_path)
             print(f"model saved in {file_path}!")
         train_losses.append(train_loss)
@@ -440,13 +437,7 @@ def main_train_loop(sub, current_time, eeg_model, img_model, train_dataloader, t
         # Update learning rate
         scheduler.step()
         
-        # Evaluate the model
-        # test_loss, test_accuracy, top5_acc = evaluate_model(eeg_model, img_model, test_dataloader, device, text_features_test_all, img_features_test_all,k=200)
-                # Call evaluate_model function
-                        # Get the current date and time, format as "YYYYMMDD_HHMM"
-
-        # Add date-time prefix to save_dir
-        test_save_dir = f'{current_time}_vae_imgs'
+        test_save_dir = os.path.join("/home/tom/fsas/eeg_data/preprocessed_eeg_data", f"generated_images", f'{current_time}_vae_imgs')
         test_loss, test_accuracy, top5_acc = evaluate_model(eeg_model, img_model, test_dataloader, device, text_features_test_all, img_features_test_all, k=200, save_dir=test_save_dir, epoch=epoch)
         test_losses.append(test_loss)
         test_accuracies.append(test_accuracy)
@@ -482,7 +473,7 @@ def main_train_loop(sub, current_time, eeg_model, img_model, train_dataloader, t
             "Epoch": epoch
         })
 
-        print(f"Epoch {epoch + 1}/{config['epochs']} - Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}, Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}, Top5 Accuracy: {top5_acc:.4f}")
+        print(f"Epoch {epoch + 1}/{config.epochs} - Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}, Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}, Top5 Accuracy: {top5_acc:.4f}")
         torch.cuda.empty_cache()
 
     logger.finish()
@@ -491,14 +482,14 @@ def main_train_loop(sub, current_time, eeg_model, img_model, train_dataloader, t
 def main():
     # Argument parser setup
     parser = argparse.ArgumentParser(description='EEG Model Training Script')
-    parser.add_argument('--data_path', type=str, default='/root/autodl-tmp/THINGS/Preprocessed_data_250Hz', help='Path to data')
-    parser.add_argument('--output_dir', type=str, default='./outputs/contrast', help='Directory to save output results')
+    parser.add_argument('--data_path', type=str, default='/home/tom/fsas/eeg_data/preprocessed_eeg_data', help='Path to data')
+    parser.add_argument('--output_dir', type=str, default='/home/tom/fsas/eeg_data/preprocessed_eeg_data/outputs/contrast', help='Directory to save output results')
     parser.add_argument('--project', type=str, default='train_pos_img_text_rep', help='Project name for logging')
     parser.add_argument('--entity', type=str, default="sustech_rethinkingbci", help='WandB entity name')
     parser.add_argument('--name', type=str, default="lr=3e-4_img_pos_pro_eeg", help='Experiment name')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--epochs', type=int, default=200, help='Number of training epochs')
-    parser.add_argument('--batch_size', type=int, default=30, help='Batch size for training')
+    parser.add_argument('--batch_size', type=int, default=16, help='Batch size for training')
     parser.add_argument('--insubject', default=True, help='Flag to indicate within-subject training')
     parser.add_argument('--encoder_type', type=str, default='encoder_low_level', 
                         choices=['EEGNetv4_Encoder', 'ATCNet_Encoder', 'EEGConformer_Encoder', 'EEGITNet_Encoder', 'ShallowFBCSPNet_Encoder', 'encoder_low_level'], 
@@ -539,7 +530,7 @@ def main():
             test_dataset = EEGDataset(data_path, exclude_subject=sub, train=False)
             
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0, drop_last=True)
-        test_loader = DataLoader(test_dataset, batch_size=20, shuffle=True, num_workers=0, drop_last=True)
+        test_loader = DataLoader(test_dataset, batch_size=20, shuffle=False, num_workers=0, drop_last=True)
 
         text_features_train_all = train_dataset.text_features
         text_features_test_all = test_dataset.text_features

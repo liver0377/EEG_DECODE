@@ -61,7 +61,8 @@ class EEGDataset():
         
         if self.classes is None and self.pictures is None:
             # Try to load the saved features if they exist
-            features_filename = os.path.join(f'train_image_latent_512.pt') if self.train else os.path.join(f'test_image_latent_512.pt')
+            # train_image_latent_512.pt, test_image_latent_512.pt 从何而来?
+            features_filename = os.path.join(f"/home/tom/fsas/eeg_data", f'train_image_latent_512.pt') if self.train else os.path.join(f"/home/tom/fsas/eeg_data",f'test_image_latent_512.pt')
             if os.path.exists(features_filename) :
                 saved_features = torch.load(features_filename)
                 self.text_features = None
@@ -201,10 +202,10 @@ class EEGDataset():
                     data = np.load(file_path, allow_pickle=True)
                     preprocessed_eeg_data = torch.from_numpy(data['preprocessed_eeg_data']).float().detach()
                     times = torch.from_numpy(data['times']).detach()[50:]
-                    ch_names = data['ch_names']  # 保留为 Python 列表，或者进行适当的编码
+                    ch_names = data['ch_names']  
                     n_classes = 200  # Each class contains 1 images
                     
-                    samples_per_class = 1  # 一个类有1个数据
+                    samples_per_class = 1  
 
                     for i in range(n_classes):
                         if self.classes is not None and i not in self.classes:  # If we've defined specific classes and the current class is not in the list, skip
@@ -212,11 +213,11 @@ class EEGDataset():
                         start_index = i * samples_per_class  # Update start_index for each class
                         preprocessed_eeg_data_class = preprocessed_eeg_data[start_index:start_index+samples_per_class]
                         # print("preprocessed_eeg_data_class", preprocessed_eeg_data_class.shape)
-                        labels = torch.full((samples_per_class*80,), i, dtype=torch.long).detach()  # Add class labels
-                        # preprocessed_eeg_data_class = torch.mean(preprocessed_eeg_data_class.squeeze(0), 0)
+                        labels = torch.full((samples_per_class,), i, dtype=torch.long).detach()  # Add class labels
+                        preprocessed_eeg_data_class = torch.mean(preprocessed_eeg_data_class.squeeze(0), 0)
                         # print("preprocessed_eeg_data_class", preprocessed_eeg_data_class.shape)
                         data_list.append(preprocessed_eeg_data_class)
-                        label_list.append(labels)  # Add labels to the label list
+                        label_list.append(labels)  # Add labels to the label list 
                 else:
                     continue
         # datalist: (subjects * classes) * (10 * 4 * 17 * 100)
@@ -231,7 +232,7 @@ class EEGDataset():
             # print("label_tensor", label_tensor.shape)
             print("data_tensor", data_tensor.shape)
         else:           
-            data_tensor = torch.cat(data_list, dim=0).view(-1, *data_list[0].shape[2:])   
+            data_tensor = torch.cat(data_list, dim=0).view(-1, *data_list[0].shape)   
             # label_tensor = torch.cat(label_list, dim=0)
             # print("label_tensor", label_tensor.shape)
             # data_tensor = torch.cat(data_list, dim=0).view(-1, *data_list[0].shape[2:])
@@ -321,14 +322,15 @@ class EEGDataset():
     
     def __getitem__(self, index):
         # Get the data and label corresponding to "index"
-        # index: (subjects * classes * 10 * 4)
+        # train: index: (subjects * classes * 10 * 4)
+        # test: index: (200 * n_subjects)
         x = self.data[index]
         label = self.labels[index]
         
         if self.pictures is None:
             if self.classes is None:
                 index_n_sub_train = self.n_cls * 10 * 4
-                index_n_sub_test = self.n_cls * 1 * 80
+                index_n_sub_test = self.n_cls * 1 * 80 # 16000
             else:
                 index_n_sub_test = len(self.classes)* 1 * 80
                 index_n_sub_train = len(self.classes)* 10 * 4
@@ -339,9 +341,9 @@ class EEGDataset():
                 text_index = (index % index_n_sub_test)
             # img_index: classes * 10
             if self.train:
-                img_index = (index % index_n_sub_train) // (4)
+                img_index = (index % index_n_sub_train) // (4) # (0, 16540)
             else:
-                img_index = (index % index_n_sub_test)
+                img_index = (index % index_n_sub_test) 
         else:
             if self.classes is None:
                 index_n_sub_train = self.n_cls * 1 * 4
@@ -360,7 +362,10 @@ class EEGDataset():
             else:
                 img_index = (index % index_n_sub_test)
                 
-        text = self.text[text_index]
+        text = "" # self.text[text_index]
+        # if not self.train:
+            # print(f"len: {self.__len__()}, evaluating: img_index: {img_index}")
+
         img = self.img[img_index]
         
         text_features = -1

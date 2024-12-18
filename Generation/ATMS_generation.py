@@ -351,11 +351,22 @@ def get_eeg_features(sub, eeg_model, dataloader, device, train=True):
         print(f"eeg features saved in {eeg_features_path}")
     return features_tensor.cpu()
 
+def inference(sub, pipe, c_embeddings, num_inference_steps=50, guidance_scale=5.0):
+    pipe.diffusion_prior.load_state_dict(torch.load(f"/home/tom/fsas/eeg_data/diffusion_prior/{sub}/diffusion_prior.pt", weights_only=True))
+    img_generated_embedding_list = []
 
+    batch_size = 1
+    for i in range(0, c_embeddings.shape[0], batch_size):
+        h = pipe.generate(c_embeds=c_embeddings[i:i + batch_size], num_inference_steps=num_inference_steps, guidance_scale=guidance_scale)
+        img_generated_embedding_list.append(h)
+
+    img_generated_embedding = torch.cat(img_generated_embedding_list, dim=0)
+    return img_generated_embedding 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='diffusion prior training')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
+    parser.add_argument('--inference', action='store_true')
     args = parser.parse_args()
 
     ddp_utils.init_distributed_mode(args)
@@ -387,8 +398,6 @@ if __name__ == "__main__":
     img_test_embedding = get_img_features(visual_encoder, device, preprocessed_image_cache_test_all, train=False) # (200, 1024) 
 
     # 2. 使用pipe训练u-net网络
-    print(f"img_train_embedding shape: {img_train_embedding.shape}")
-    print(f"eeg_train_embedding shape: {eeg_train_embedding.shape}")
     c_embedding = img_train_embedding.view(1654, 10, 1, 1024).repeat(1, 1, 4, 1).view(66160, 1024)  # (66160, 1024)
     h_embedding = eeg_train_embedding # (66160, 1024)
     diffusion_dataset = EmbeddingDataset(c_embedding, h_embedding)
@@ -396,11 +405,17 @@ if __name__ == "__main__":
 
     diffusion_prior =  DiffusionPriorUNet(embed_dim=1024, cond_dim=1024, dropout=0.1)
     pipe = Pipe(diffusion_prior, device=device)
-
-    pipe.train(diffusion_dataloader, num_epochs=150, learning_rate=1e-3)
-
     diffusion_prior_ckpt_path = f"/home/tom/fsas/eeg_data/diffusion_prior/{sub}/diffusion_prior.pt"
-    os.makedirs(os.path.dirname(diffusion_prior_ckpt_path), exist_ok=True)
-    torch.save(pipe.diffusion_prior.state_dict(), diffusion_prior_ckpt_path)
+
+    if not args.inference:
+        pipe.train(diffusion_dataloader, num_epochs=150, learning_rate=1e-3)
+        os.makedirs(os.path.dirname(diffusion_prior_ckpt_path), exist_ok=True)
+        torch.save(pipe.diffusion_prior.state_dict(), diffusion_prior_ckpt_path)
+    
+    img_generated_embedding = inference(sub, pipe, eeg_test_embedding, num_inference_steps=50, guidance_scale=5.0)
+    print(f"img_generated_embedding shape: {img_generated_embedding.shape}")
+
+    
+    
 
 
