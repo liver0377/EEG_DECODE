@@ -418,17 +418,17 @@ def main_train_loop(sub, current_time, eeg_model, img_model, train_dataloader, t
     for epoch in range(config.epochs):
 
         # Add date-time prefix to save_dir
-        train_save_dir = os.path.join("/home/tom/fsas/eeg_data/preprocessed_eeg_data", 'generated_images', f'{current_time}_vae_train_imgs')
+        train_save_dir = os.path.join("/home/tom/fsas/eeg_data", 'generated_images', f'{current_time}_vae_train_imgs')
         train_loss, train_accuracy, features_tensor = train_model(eeg_model, img_model, train_dataloader, optimizer, device, text_features_train_all, img_features_train_all, save_dir=train_save_dir, epoch=epoch)
         if (epoch +1) % 5 == 0:                    
             # Get the current time and format it as a string (e.g., '2024-01-17_15-30-00')                  
             if config.insubject==True:       
-                os.makedirs(f"/home/tom/fsas/eeg_data/preprocessed_eeg_data/models/contrast/{config.encoder_type}/{sub}/{current_time}", exist_ok=True)             
-                file_path = f"/home/tom/fsas/eeg_data/preprocessed_eeg_data/models/contrast/{config.encoder_type}/{sub}/{current_time}/{epoch+1}.pth"
+                os.makedirs(f"/home/tom/fsas/eeg_data/models/contrast/{config.encoder_type}/{sub}/{current_time}", exist_ok=True)             
+                file_path = f"/home/tom/fsas/eeg_data/models/contrast/{config.encoder_type}/{sub}/{current_time}/{epoch+1}.pth"
                 torch.save(eeg_model.state_dict(), file_path)            
             else:                
-                os.makedirs(f"/home/tom/fsas/eeg_data/preprocessed_eeg_data/models/contrast/across/{config.encoder_type}/{current_time}", exist_ok=True)             
-                file_path = f"/home/tom/fsas/eeg_data/preprocessed_eeg_data/models/contrast/across/{config.encoder_type}/{current_time}/{epoch+1}.pth"
+                os.makedirs(f"/home/tom/fsas/eeg_data/models/contrast/across/{config.encoder_type}/{current_time}", exist_ok=True)             
+                file_path = f"/home/tom/fsas/eeg_data/models/contrast/across/{config.encoder_type}/{current_time}/{epoch+1}.pth"
                 torch.save(eeg_model.state_dict(), file_path)
             print(f"model saved in {file_path}!")
         train_losses.append(train_loss)
@@ -437,7 +437,7 @@ def main_train_loop(sub, current_time, eeg_model, img_model, train_dataloader, t
         # Update learning rate
         scheduler.step()
         
-        test_save_dir = os.path.join("/home/tom/fsas/eeg_data/preprocessed_eeg_data", f"generated_images", f'{current_time}_vae_imgs')
+        test_save_dir = os.path.join("/home/tom/fsas/eeg_data", f"generated_images", f'{current_time}_vae_imgs')
         test_loss, test_accuracy, top5_acc = evaluate_model(eeg_model, img_model, test_dataloader, device, text_features_test_all, img_features_test_all, k=200, save_dir=test_save_dir, epoch=epoch)
         test_losses.append(test_loss)
         test_accuracies.append(test_accuracy)
@@ -483,7 +483,7 @@ def main():
     # Argument parser setup
     parser = argparse.ArgumentParser(description='EEG Model Training Script')
     parser.add_argument('--data_path', type=str, default='/home/tom/fsas/eeg_data/preprocessed_eeg_data', help='Path to data')
-    parser.add_argument('--output_dir', type=str, default='/home/tom/fsas/eeg_data/preprocessed_eeg_data/outputs/contrast', help='Directory to save output results')
+    parser.add_argument('--output_dir', type=str, default='/home/tom/fsas/eeg_data/outputs/contrast', help='Directory to save output results')
     parser.add_argument('--project', type=str, default='train_pos_img_text_rep', help='Project name for logging')
     parser.add_argument('--entity', type=str, default="sustech_rethinkingbci", help='WandB entity name')
     parser.add_argument('--name', type=str, default="lr=3e-4_img_pos_pro_eeg", help='Experiment name')
