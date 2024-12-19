@@ -354,50 +354,34 @@ def evaluate_model(eegmodel, imgmodel, dataloader, device, text_features_all, im
     top5_acc = 0
     
     epoch_save_dir = os.path.join(save_dir, f'epoch_{epoch}')
-    if not os.path.exists(epoch_save_dir):
-        os.makedirs(epoch_save_dir)
-    fg = True
     with torch.no_grad():
         for batch_idx, (eeg_data, labels, _, _, img, img_features) in enumerate(dataloader):            
             eeg_data = eeg_data.to(device)
             # eeg_data = eeg_data.permute(0, 2, 1)
             labels = labels.to(device)
             img_features = img_features.to(device).float()
-            # print(f" eeg_data[:, :, :250] shape: {eeg_data[:, :, :250].shape}")
             eeg_features = eegmodel(eeg_data[:, :, :250]).float()
             logit_scale = eegmodel.logit_scale
             regress_loss = mae_loss_fn(eeg_features, img_features)
-            # contras_loss = clip_loss(eeg_features.view(eeg_features.size(0), -1), img_features.view(img_features.size(0), -1), logit_scale)
             loss = regress_loss 
             total_loss += loss.item()
             
-            if epoch %10 ==0:
+            if (epoch + 1)  % 10 ==0:
+                os.makedirs(epoch_save_dir, exist_ok=True)
                 z = eeg_features
                 x_rec = vae.decode(z).sample
                 image_rec = image_processor.postprocess(x_rec, output_type='pil')
                 
                 # Use label to create a unique file name
-                # label_name = str(labels.item())
-                # save_path = os.path.join(epoch_save_dir, f"reconstructed_image_weichen_{label_name}.png")
-                # image_rec[0].save(save_path)
-                
-                # Use label to create a unique file name
                 # 每10个epoch一次，生成所有测试集label的low-level图片
                 for i, label in enumerate(labels.tolist()): 
-                    base_save_path = os.path.join(epoch_save_dir, f"reconstructed_image_{label}_0.png")
+                    base_save_path = os.path.join(epoch_save_dir, f"reconstructed_image_{label}.png")
                     save_path = base_save_path
-                    k = 0
-                    # Check if the file already exists
-                    while os.path.exists(save_path):
-                        save_path = os.path.join(epoch_save_dir, f"reconstructed_image_{label}_{k}.png")
-                        k += 1
-                    # Save the image
                     image_rec[i].save(save_path) 
                 del eeg_features, img_features, eeg_data, image_rec, x_rec    
                 continue
             del eeg_features, img_features, eeg_data
             
-    torch.cuda.empty_cache()
     average_loss = total_loss / (batch_idx + 1)
     return average_loss, accuracy, top5_acc
 
@@ -405,9 +389,9 @@ def main_train_loop(sub, current_time, eeg_model, img_model, train_dataloader, t
                     text_features_train_all, text_features_test_all, img_features_train_all, img_features_test_all, config, logger=None):
     # Introduce cosine annealing scheduler
     scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.epochs, eta_min=1e-6)
-    logger = wandb_logger(config) if logger else None
-    logger.watch(eeg_model,logger) 
-    logger.watch(img_model,logger) 
+    # logger = wandb_logger(config) if logger else None
+    # logger.watch(eeg_model,logger) 
+    # logger.watch(img_model,logger) 
     train_losses, train_accuracies = [], []
     test_losses, test_accuracies = [], []
 
@@ -419,23 +403,31 @@ def main_train_loop(sub, current_time, eeg_model, img_model, train_dataloader, t
 
         # Add date-time prefix to save_dir
         train_save_dir = os.path.join("/home/tom/fsas/eeg_data", 'generated_images', f'{current_time}_vae_train_imgs')
-        train_loss, train_accuracy, features_tensor = train_model(eeg_model, img_model, train_dataloader, optimizer, device, text_features_train_all, img_features_train_all, save_dir=train_save_dir, epoch=epoch)
-        if (epoch +1) % 5 == 0:                    
-            # Get the current time and format it as a string (e.g., '2024-01-17_15-30-00')                  
-            if config.insubject==True:       
-                os.makedirs(f"/home/tom/fsas/eeg_data/models/contrast/{config.encoder_type}/{sub}/{current_time}", exist_ok=True)             
-                file_path = f"/home/tom/fsas/eeg_data/models/contrast/{config.encoder_type}/{sub}/{current_time}/{epoch+1}.pth"
-                torch.save(eeg_model.state_dict(), file_path)            
-            else:                
-                os.makedirs(f"/home/tom/fsas/eeg_data/models/contrast/across/{config.encoder_type}/{current_time}", exist_ok=True)             
-                file_path = f"/home/tom/fsas/eeg_data/models/contrast/across/{config.encoder_type}/{current_time}/{epoch+1}.pth"
-                torch.save(eeg_model.state_dict(), file_path)
-            print(f"model saved in {file_path}!")
-        train_losses.append(train_loss)
-        train_accuracies.append(train_accuracy)
+        if not config.evaluate:
+            train_loss, train_accuracy, features_tensor = train_model(eeg_model, img_model, train_dataloader, optimizer, device, text_features_train_all, img_features_train_all, save_dir=train_save_dir, epoch=epoch)
+            if (epoch +1) % 5 == 0:                    
+                # Get the current time and format it as a string (e.g., '2024-01-17_15-30-00')                  
+                if config.insubject==True:       
+                    os.makedirs(f"/home/tom/fsas/eeg_data/models/contrast/{config.encoder_type}/{sub}/{current_time}", exist_ok=True)             
+                    os.makedirs(f"/home/tom/fsas/eeg_data/models/contrast/Proj_img/{sub}/{current_time}", exist_ok=True)
+                    eeg_model_save_path = f"/home/tom/fsas/eeg_data/models/contrast/{config.encoder_type}/{sub}/{current_time}/{epoch+1}.pth"
+                    image_model_save_path = f"/home/tom/fsas/eeg_data/models/contrast/Proj_img/{sub}/{current_time}/{epoch+1}.pth"
+                    torch.save(eeg_model.state_dict(), eeg_model_save_path)            
+                    torch.save(img_model.state_dict(), image_model_save_path)
+                else:                
+                    os.makedirs(f"/home/tom/fsas/eeg_data/models/contrast/across/{config.encoder_type}/{sub}/{current_time}", exist_ok=True)             
+                    os.makedirs(f"/home/tom/fsas/eeg_data/models/contrast/across/Proj_img/{sub}/{current_time}", exist_ok=True)
+                    eeg_model_save_path = f"/home/tom/fsas/eeg_data/models/contrast/across/{config.encoder_type}/{sub}/{current_time}/{epoch+1}.pth"
+                    image_model_save_path = f"/home/tom/fsas/eeg_data/models/contrast/across/Proj_img/{sub}/{current_time}/{epoch+1}.pth"
+                    torch.save(eeg_model.state_dict(), eeg_model_save_path)            
+                    torch.save(img_model.state_dict(), image_model_save_path)
+                print(f"EEG encoder model saved in {eeg_model_save_path}!")
+                print(f"Image encoder model saved in {image_model_save_path}")
+            train_losses.append(train_loss)
+            train_accuracies.append(train_accuracy)
 
-        # Update learning rate
-        scheduler.step()
+            # Update learning rate
+            scheduler.step()
         
         test_save_dir = os.path.join("/home/tom/fsas/eeg_data", f"generated_images", f'{current_time}_vae_imgs')
         test_loss, test_accuracy, top5_acc = evaluate_model(eeg_model, img_model, test_dataloader, device, text_features_test_all, img_features_test_all, k=200, save_dir=test_save_dir, epoch=epoch)
@@ -473,10 +465,11 @@ def main_train_loop(sub, current_time, eeg_model, img_model, train_dataloader, t
             "Epoch": epoch
         })
 
-        print(f"Epoch {epoch + 1}/{config.epochs} - Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}, Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}, Top5 Accuracy: {top5_acc:.4f}")
-        torch.cuda.empty_cache()
+        if not config.evaluate:
+            print(f"Epoch {epoch + 1}/{config.epochs} - Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}, Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}, Top5 Accuracy: {top5_acc:.4f}")
+            torch.cuda.empty_cache()
 
-    logger.finish()
+    # logger.finish()
     return results
 
 def main():
@@ -499,6 +492,7 @@ def main():
     parser.add_argument('--gpu', type=str, default='cuda:0', help='GPU device to use')
     parser.add_argument('--device', type=str, choices=['cpu', 'gpu'], default='gpu', help='Device to run on (cpu or gpu)')
     parser.add_argument('--subjects', nargs='+', default=['sub-08'], help='List of subject IDs')
+    parser.add_argument('--evaluate', action='store_true')
     
     args = parser.parse_args()
 
