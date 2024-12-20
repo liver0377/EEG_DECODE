@@ -226,7 +226,7 @@ class EEGDataset():
                 elif self.classes is not None and self.pictures is None:
                     for c in self.classes:
                         start_index = c * samples_per_class
-                        preprocessed_eeg_data_class = preprocessed_eeg_data[start_index: start_index+samples_per_class]
+                        preprocessed_eeg_data_class = preprocessed_eeg_data[start_index: start_index+samples_per_class] # (10, 4, 63, 250)
                         labels = torch.full((samples_per_class,), c, dtype=torch.long).detach()  
                         data_list.append(preprocessed_eeg_data_class)
                         label_list.append(labels)
@@ -267,7 +267,7 @@ class EEGDataset():
                 else:
                     continue
         if self.train:
-            data_tensor = torch.cat(data_list, dim=0).view(-1, *data_list[0].shape[2:])                 
+            data_tensor = torch.cat(data_list, dim=0).view(-1, *data_list[0].shape[2:])  #                
             print("data_tensor", data_tensor.shape)
         else:           
             data_tensor = torch.cat(data_list, dim=0).view(-1, *data_list[0].shape)   
