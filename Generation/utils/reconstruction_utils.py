@@ -7,6 +7,29 @@ from subject_layers.SelfAttention_Family import FullAttention, AttentionLayer
 from subject_layers.Embed import DataEmbedding
 from loss import ClipLoss
 from torch import Tensor
+from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
+
+class CLIPEncoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # self.clip = CLIPVisionModel.from_pretrained('openai/clip-vit-large-patch14').to(torch.bfloat16)
+        # self.clip_size = (224, 224)
+
+        self.preprocess = CLIPImageProcessor(
+            # size={"height": 512, "width": 512},
+            size={"shortest_edge": 512}, 
+            crop_size={"height": 512, "width": 512},
+        )
+
+
+        # for param in self.clip.parameters():
+        #     param.requires_grad = False
+        self.image_encoder = CLIPVisionModelWithProjection.from_pretrained(
+        "h94/IP-Adapter", 
+        # "laion2b_s32b_b79k",
+        subfolder="models/image_encoder",
+        torch_dtype=torch.float16,
+        ).to("cuda")
 
 class Config:
     def __init__(self):

@@ -8,7 +8,7 @@ from eegdatasets_leaveone_latent_vae_no_average import EEGDataset
 from torch.utils.data import DataLoader
 from custom_pipeline_low_level import Generator4Embeds
 from PIL import Image
-from utils.ATMS import ATMS
+from utils.reconstruction_utils import ATMS, CLIPEncoder
 from diffusion_prior import DiffusionPriorUNet, Pipe
 
 
@@ -16,6 +16,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 sdxl_pipe = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float, variant="fp16")
 
 image_processor = VaeImageProcessor()
+clip_encoder = CLIPEncoder().to(device)
 
 if hasattr(sdxl_pipe, 'vae'):
     for param in sdxl_pipe.vae.parameters():
@@ -78,41 +79,50 @@ def generate_10_images_with_low_level(eeg_encoder, eeg_encoder_low_level, sub, d
     gen.manual_seed(seed_value)
     
     count = 0
-    for batch_idx, (eeg_datas, labels, _, _, images, _) in enumerate(data_loader):
-        eeg_datas = eeg_datas.to(device)
+    with torch.no_grad():
+        for batch_idx, (eeg_datas, labels, _, _, images, _) in enumerate(data_loader):
+            eeg_datas = eeg_datas.to(device)
 
-        batch_size = eeg_datas.size(0)  # Assume the first element is the data tensor
-        subject_id = extract_id_from_string(sub)
-        subject_ids = torch.full((batch_size,), subject_id, dtype=torch.long).to(device)
-        eeg_embedding = eeg_encoder(eeg_datas, subject_ids)
+            batch_size = eeg_datas.size(0)  # Assume the first element is the data tensor
+            subject_id = extract_id_from_string(sub)
+            subject_ids = torch.full((batch_size,), subject_id, dtype=torch.long).to(device)
+            eeg_embedding = eeg_encoder(eeg_datas, subject_ids)
 
-        eeg_latent = eeg_encoder_low_level(eeg_datas)
-        x_reconstructed = vae.decode(eeg_latent).sample
-        img_reconstructed = image_processor.postprocess(x_reconstructed, output_type="pil") # low level image
+            eeg_latent = eeg_encoder_low_level(eeg_datas)
+            x_reconstructed = vae.decode(eeg_latent).sample
+            img_reconstructed = image_processor.postprocess(x_reconstructed, output_type="pil") # low level images
+              
+            for i, (label) in enumerate(labels):
+                save_prefix = f"/home/tom/fsas/eeg_data/generated_images/demo/output"
+                final_image_name = f"final_{label}.png" 
+                final_image_save_path = os.path.join(save_prefix, final_image_name)
 
-        generator = Generator4Embeds(num_inference_steps=4, device=device, low_level_image=img_reconstructed)   
-        h = pipe.generate(c_embeds=eeg_embedding, num_inference_steps=10, guidance_scale=2.0)
+                if os.path.exists(final_image_save_path):
+                    continue 
                 
-        for i, (label) in enumerate(labels):
-            save_prefix = f"/home/tom/fsas/eeg_data/generated_images/demo/output"
-            final_image_name = f"final_{label}.png" 
-            final_image_save_path = os.path.join(save_prefix, final_image_name)
+                low_level_image_save_name = f"low_level_{label}.png"
+                low_level_image_save_path = os.path.join(save_prefix, low_level_image_save_name)
+                img_reconstructed[i].save(low_level_image_save_path)
 
-            if os.path.exists(final_image_save_path):
-                pass
+                low_level_image = clip_encoder.preprocess(img_reconstructed[i], return_tensors="pt").pixel_values
+                # 1. 使用low level image
+                generator = Generator4Embeds(num_inference_steps=4, device=device, low_level_image=low_level_image) 
+                # 2. 不使用low level image
+                # generator = Generator4Embeds(num_inference_steps=4, device=device) 
 
-            final_image = generator.generate(h[i], generator=gen)
-            final_image.save(final_image_save_path)
+                h = pipe.generate(c_embeds=eeg_embedding[i].unsqueeze(0), num_inference_steps=10, guidance_scale=2.0)
+                final_image = generator.generate(h, generator=gen)
+                final_image.save(final_image_save_path)
 
-            original_image = images[i]
-            image = Image.open(original_image)
-            original_image_name = f"original_{label}.png"
-            original_image_save_path = os.path.join(save_prefix, original_image_name)
-            image.save(original_image_save_path)
+                original_image = images[i]
+                image = Image.open(original_image)
+                original_image_name = f"original_{label}.png"
+                original_image_save_path = os.path.join(save_prefix, original_image_name)
+                image.save(original_image_save_path)
 
-            count = count + 1
-            if count == 10:
-               return 
+                count = count + 1
+                if count == 10:
+                   return
 
             
 if __name__ == "__main__":
