@@ -50,7 +50,7 @@ def generate_low_level(eeg_encoder_low_level, eeg_datas, labels):
             save_path = f"/home/tom/fsas/eeg_data/generated_images/low_level/{label}.png"
             img_reconstructed[0].save(save_path)
     
-def clip_pipeline(low_level_image_path, eeg_encoder, eeg_datas, labels, sub, pipe):
+def clip_pipeline_with_encoder(low_level_image_path, eeg_encoder, eeg_datas, labels, sub, pipe):
     """
     eeg_datas与labels样本量必须一致
     """
@@ -84,7 +84,32 @@ def clip_pipeline(low_level_image_path, eeg_encoder, eeg_datas, labels, sub, pip
         clip_path = f"/home/tom/fsas/eeg_data/generated_images/clip/{label}.png"
         generated_image.save(clip_path)
         
+def clip_pipeline(eeg_features, labels, pipe):
+    """
+    eeg_datas与labels样本量必须一致
+    """
 
+    eeg_features= eeg_features.to(device)
+    labels = labels.to(device)
+
+    assert eeg_features.shape[0] == labels.shape[0], "eeg_datas and labels do not match"
+    
+    os.makedirs("/home/tom/fsas/eeg_data/generated_images/clip", exist_ok=True)
+
+    seed_value = 42
+    gen = torch.Generator(device=device)
+    gen.manual_seed(seed_value) 
+
+    for i, (label) in enumerate(labels):
+        eeg_feature = eeg_features[i].unsqueeze(0)
+        generator = Generator4Embeds(num_inference_steps=4, device=device) 
+        h = pipe.generate(c_embeds=eeg_feature, num_inference_steps=10, guidance_scale=2.0)
+        generated_image = generator.generate(h, generator=gen)
+
+        
+        clip_path = f"/home/tom/fsas/eeg_data/generated_images/clip/{label}.png"
+        generated_image.save(clip_path)
+        
 def extract_id_from_string(s):
     match = re.search(r'\d+$', s)
     if match:
@@ -97,7 +122,9 @@ if __name__ == "__main__":
     test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False, drop_last=True)
 
     eeg_datas = test_dataset.data
-    labels = test_dataset.labels
+    labels = test_dataset.labels # [0, 1, ..., 199]
+
+    print(f"labels: {labels}")
 
     print(f"eeg_datas shape: {eeg_datas.shape}")
     print(f"labels shape: {labels.shape}")
@@ -115,6 +142,7 @@ if __name__ == "__main__":
     diffusion_prior_pipe = Pipe(diffusion_prior, device=device) 
     diffusion_prior_pipe.diffusion_prior.load_state_dict(torch.load(f'/home/tom/fsas/eeg_data/diffusion_prior_old/sub-08/diffusion_prior.pt', map_location=device))
 
-    low_level_image_path = "/home/tom/fsas/eeg_data/generated_images/low_level"
-    clip_pipeline(low_level_image_path, eeg_encoder, eeg_datas, labels, "sub-08", diffusion_prior_pipe)
+    test_eeg_features_path = "/home/tom/fsas/eeg_data/features/ATM_S_eeg_features_sub-08_test_old.pt"
+    eeg_features = torch.load(test_eeg_features_path, weights_only=True)
+    clip_pipeline(eeg_features, labels,  diffusion_prior_pipe)
 
