@@ -62,10 +62,13 @@ class EEGDataset():
         if self.classes is None and self.pictures is None:
             # Try to load the saved features if they exist
             features_filename = os.path.join(f'{model_type}_features_train.pt') if self.train else os.path.join(f'{model_type}_features_test.pt')
-            
-            if os.path.exists(features_filename) :
+            text_features_filename = f"/home/tom/fsas/eeg_data/features/ATMS_ViT-H-14_text_features_{'train' if self.train else 'test'}.pt" 
+
+            if os.path.exists(features_filename):
                 saved_features = torch.load(features_filename)
-                self.text_features = saved_features['text_features']
+                # self.text_features = saved_features['text_features']
+                text_features = torch.load(text_features_filename, weights_only=True)
+                self.text_features = text_features 
                 self.img_features = saved_features['img_features']
             else:
                 self.text_features = self.Textencoder(self.text)
@@ -276,6 +279,7 @@ class EEGDataset():
         self.ch_names = ch_names
 
         print(f"Data tensor shape: {data_tensor.shape}, label tensor shape: {label_tensor.shape}, text length: {len(texts)}, image length: {len(images)}")
+        print(f"texts len: {len(texts)}, images len: {len(images)}")
         
         return data_tensor, label_tensor, texts, images
 
@@ -340,7 +344,8 @@ class EEGDataset():
                 index_n_sub_train = len(self.classes)* 10 * 4
             # text_index: classes
             if self.train:
-                text_index = (index % index_n_sub_train) // (10 * 4)
+                # text_index = (index % index_n_sub_train) // (10 * 4)
+                text_index = (index % index_n_sub_train) // (4)
             else:
                 text_index = (index % index_n_sub_test)
             # img_index: classes * 10
@@ -365,10 +370,11 @@ class EEGDataset():
                 img_index = (index % index_n_sub_train) // (4)
             else:
                 img_index = (index % index_n_sub_test)
-        # print("text_index", text_index)
+        # print("text_index: ", text_index)
+        # print("image_index: ", img_index)
         # print("self.text", self.text)
         # print("self.text", len(self.text))
-        text = self.text[text_index]
+        text = self.text[text_index // 10]
         img = self.img[img_index]
         
         text_features = self.text_features[text_index]

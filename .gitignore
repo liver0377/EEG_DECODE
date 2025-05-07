@@ -33,3 +33,5 @@ Retrieval/wandb
 **/*.pyc
 log.txt
 nohup.out
+Retrieval/models
+**/*.log

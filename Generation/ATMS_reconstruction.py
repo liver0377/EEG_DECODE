@@ -230,49 +230,17 @@ def train_model(sub, eeg_model, image_model, dataloader, optimizer, device, img_
         
         # 获取eeg特征
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            # start_time = time.time()
-            # print(f"getting eeg feature")
             eeg_features = eeg_model.module(eeg_data, subject_ids).float()        
-            # features_list.append(eeg_features)
-        
-            # eeg_end_time = time.time()
-            # print(f"eeg 编码时间: {eeg_end_time - start_time} seconds")
-            # 获取图片特征
-            # image_inputs = torch.stack([preprocess_train(Image.open(img_path).convert("RGB")) for img_path in img])
-            # print(f"img length: {len(img)}")
-            # print(f"getting image feature")
+
             selected_preprocessed_images = preprocessed_image_cache_train_all[indices].to(device)
             img_features_model = image_model.module(selected_preprocessed_images).float()
             img_features_model = img_features_model / img_features_model.norm(dim=-1, keepdim=True)
-            # print(f"img_features_model shape: {img_features_model.shape}")
 
-            # image_end_time = time.time()
-            # print(f"图片编码时间: {image_end_time - eeg_end_time} seconds")
-            # img_features_model = img_features_model / img_features_model.norm(dim=-1, keepdim=True)
-        
-            # 更新全局图片embedding
-            # print(f"updating global image embedding")
-            # if (batch_idx +  1) % 10 == 0:
-            # img_features_all[indices] = img_features_model.detach().float()#.cpu()
-
-            # update_end_time = time.time()
-
-            # if (batch_idx + 1) % 10 == 0:
-            # print(f"特征更新时间: {update_end_time - image_end_time} seconds")
-        
-        
-            # 计算loss
-            # print(f"caculating loss")
             logit_scale = eeg_model.module.logit_scale
             img_loss = eeg_model.module.loss_func(eeg_features, img_features_model, logit_scale)
             regress_loss =  mse_loss_fn(eeg_features, img_features_model)
             loss = (alpha * regress_loss *10 + (1 - alpha) * img_loss*10)
 
-            # loss_end_time = time.time()
-            # print(f"loss 计算时间: {loss_end_time - update_end_time} seconds")
-            # print("backward")
-
-        # loss.backward()
         optimizer.zero_grad()
         scaler.scale(loss).backward()
         scaler.step(optimizer)

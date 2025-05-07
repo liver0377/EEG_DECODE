@@ -328,11 +328,9 @@ def get_eeg_features(sub, eeg_model, dataloader, device, train=True):
     save_features = True
     features_list = []  # List to store features    
     
-    eeg_features_path = f"/home/tom/fsas/eeg_data/ATM_S_eeg_features_{sub}_{'train' if train else 'test'}.pt"
-    if os.path.exists(eeg_features_path):
-        cached_eeg_features = torch.load(eeg_features_path, weights_only=True)
-        print(f"Loaded cached features from {eeg_features_path}")
-        return cached_eeg_features.cpu()
+    os.makedirs(f"/home/tom/fsas/eeg_data/eeg4text/{sub}", exist_ok=True)
+    eeg_features_path = f"/home/tom/fsas/eeg_data/eeg4text/{sub}/ATM_S_eeg_features_{sub}_{'train' if train else 'test'}.pt"
+
     
     with torch.no_grad():
         for batch_idx, (eeg_data, _, _, _, _, _, _) in enumerate(dataloader):
@@ -373,50 +371,52 @@ if __name__ == "__main__":
     ddp_utils.init_distributed_mode(args)
     data_path = config['data_path'] 
     embedding_img_test = torch.load("/home/tom/fsas/eeg_data/ViT-H-14_features_test.pt", weights_only=True)
-    embedding_img_train = torch.load("/home/tom/fsas/eeg_data/ViT-H-14_features_train.pt", weights_only=True)
+    # embedding_img_train = torch.load("/home/tom/fsas/eeg_data/ViT-H-14_features_train.pt", weights_only=True)
 
     eeg_encoder = ATMS(63, 250)
-    eeg_encoder_ckpt_path = "/home/tom/fsas/eeg_data/models/contrast/ATMS/sub-08/12-13_17-57/40.pth"
-    eeg_encoder.load_state_dict(torch.load(eeg_encoder_ckpt_path, weights_only=True))
+    for i in range(1, 11):  # 生成sub-01到sub-10
+        sub_id = f"sub-{i:02d}"  # 保证两位数格式
 
-    visual_encoder = _build_vision_tower(embed_dim, visual_config) 
-    visual_encoder_ckpt_path = "/home/tom/fsas/eeg_data/models/contrast/ImageEncoder/sub-08/12-13_17-57/40.pth"
-    visual_encoder.load_state_dict(torch.load(visual_encoder_ckpt_path, weights_only=True))
+        eeg_encoder_ckpt_path = f"/home/tom/projects/EEG_DECODE/Retrieval/models/contrast/ATMS/{sub_id}/04-25_21-56/40.pth"
+        eeg_encoder.load_state_dict(torch.load(eeg_encoder_ckpt_path, weights_only=True))
 
-    # 1. 使用visual_encoder编码训练集与测试集图片, 使用EEG encoder编码训练集与测试集eeg信号
-    sub = "sub-08"   
+        # visual_encoder = _build_vision_tower(embed_dim, visual_config) 
+        # visual_encoder_ckpt_path = "/home/tom/fsas/eeg_data/models/contrast/ImageEncoder/sub-08/12-13_17-57/40.pth"
+        # visual_encoder.load_state_dict(torch.load(visual_encoder_ckpt_path, weights_only=True))
 
-    train_dataset = EEGDataset(data_path, subjects=[sub], train=True)
-    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=False, num_workers=0)
-    preprocessed_image_cache_train_all = train_dataset.preprocessed_image_cache
-    eeg_train_embedding = get_eeg_features(sub, eeg_encoder, train_loader, device, train=True) # (66160, 1024)
-    img_train_embedding = get_img_features(visual_encoder, device, preprocessed_image_cache_train_all, train=True) # (16540, 1024)
-    
-    test_dataset = EEGDataset(data_path, subjects=[sub], train=False)    
-    test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], shuffle=False, num_workers=0)
-    preprocessed_image_cache_test_all = test_dataset.preprocessed_image_cache
-    eeg_test_embedding = get_eeg_features(sub, eeg_encoder, test_loader, device, train=False) # (200, 1024)
-    img_test_embedding = get_img_features(visual_encoder, device, preprocessed_image_cache_test_all, train=False) # (200, 1024) 
+        # 1. 使用visual_encoder编码训练集与测试集图片, 使用EEG encoder编码训练集与测试集eeg信号
+        # sub = "sub-08"   
+
+        # train_dataset = EEGDataset(data_path, subjects=[sub], train=True)
+        # train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=False, num_workers=0)
+        # preprocessed_image_cache_train_all = train_dataset.preprocessed_image_cache
+        # eeg_train_embedding = get_eeg_features(sub, eeg_encoder, train_loader, device, train=True) # (66160, 1024)
+        # img_train_embedding = get_img_features(visual_encoder, device, preprocessed_image_cache_train_all, train=True) # (16540, 1024)
+        
+        test_dataset = EEGDataset(data_path, subjects=[sub_id], train=False)    
+        test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], shuffle=False, num_workers=0)
+        # preprocessed_image_cache_test_all = test_dataset.preprocessed_image_cache
+        eeg_test_embedding = get_eeg_features(sub_id, eeg_encoder, test_loader, device, train=False) # (200, 1024)
+        # img_test_embedding = get_img_features(visual_encoder, device, preprocessed_image_cache_test_all, train=False) # (200, 1024) 
 
     # 2. 使用pipe训练u-net网络
-    c_embedding = img_train_embedding.view(1654, 10, 1, 1024).repeat(1, 1, 4, 1).view(66160, 1024)  # (66160, 1024)
-    h_embedding = eeg_train_embedding # (66160, 1024)
-    diffusion_dataset = EmbeddingDataset(c_embedding, h_embedding)
-    diffusion_dataloader = DataLoader(diffusion_dataset, batch_size=1024, shuffle=True, num_workers=64)
+    # c_embedding = img_train_embedding.view(1654, 10, 1, 1024).repeat(1, 1, 4, 1).view(66160, 1024)  # (66160, 1024)
+    # h_embedding = eeg_train_embedding # (66160, 1024)
+    # diffusion_dataset = EmbeddingDataset(c_embedding, h_embedding)
+    # diffusion_dataloader = DataLoader(diffusion_dataset, batch_size=1024, shuffle=True, num_workers=64)
 
-    diffusion_prior =  DiffusionPriorUNet(embed_dim=1024, cond_dim=1024, dropout=0.1)
-    pipe = Pipe(diffusion_prior, device=device)
-    diffusion_prior_ckpt_path = f"/home/tom/fsas/eeg_data/diffusion_prior/{sub}/diffusion_prior.pt"
+    # diffusion_prior =  DiffusionPriorUNet(embed_dim=1024, cond_dim=1024, dropout=0.1)
+    # pipe = Pipe(diffusion_prior, device=device)
+    # diffusion_prior_ckpt_path = f"/home/tom/fsas/eeg_data/diffusion_prior/{sub}/diffusion_prior.pt"
 
-    if not args.inference:
-        pipe.train(diffusion_dataloader, num_epochs=150, learning_rate=1e-3)
-        os.makedirs(os.path.dirname(diffusion_prior_ckpt_path), exist_ok=True)
-        torch.save(pipe.diffusion_prior.state_dict(), diffusion_prior_ckpt_path)
+    # if not args.inference:
+    #     pipe.train(diffusion_dataloader, num_epochs=150, learning_rate=1e-3)
+    #     os.makedirs(os.path.dirname(diffusion_prior_ckpt_path), exist_ok=True)
+    #     torch.save(pipe.diffusion_prior.state_dict(), diffusion_prior_ckpt_path)
     
-    img_generated_embedding = inference(sub, pipe, eeg_test_embedding, num_inference_steps=50, guidance_scale=5.0)
-    print(f"img_generated_embedding shape: {img_generated_embedding.shape}")
+    # img_generated_embedding = inference(sub, pipe, eeg_test_embedding, num_inference_steps=50, guidance_scale=5.0)
+    # print(f"img_generated_embedding shape: {img_generated_embedding.shape}")
 
     
     
-
 

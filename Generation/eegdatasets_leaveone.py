@@ -20,8 +20,10 @@ import subject_layers.open_clip as open_clip
 # pretrained参数指定使用模型使用的训练集
 # vlmodel, preprocess_train, feature_extractor = open_clip.create_model_and_transforms(
 #     model_type, pretrained='laion2b_s32b_b79k', precision='fp32', device = device)
+
 local_rank = os.environ["LOCAL_RANK"]
 device = f"cuda:{local_rank}"
+
 vlmodel, preprocess_train, feature_extractor = open_clip.create_model_and_transforms(
     model_type, pretrained="/home/tom/.cache/huggingface/hub/models--laion--CLIP-ViT-H-14-laion2B-s32B-b79K/snapshots/de081ac0a0ca8dc9d1533eed1ae884bb8ae1404b/open_clip_pytorch_model.bin", precision='fp32', device = device)
 # vlmodel.load_state_dict(torch.load("/home/tom/.cache/huggingface/hub/models--laion--CLIP-ViT-H-14-laion2B-s32B-b79K/snapshots/de081ac0a0ca8dc9d1533eed1ae884bb8ae1404b/open_clip_pytorch_model.bin"))
